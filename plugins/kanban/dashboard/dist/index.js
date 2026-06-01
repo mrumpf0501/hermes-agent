@@ -86,6 +86,35 @@
     return body || raw;
   }
 
+  // Multipart upload for task attachments (same auth as TaskDrawer).
+  function uploadTaskAttachments(taskId, boardSlug, fileList) {
+    const files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return Promise.resolve();
+    const token = window.__HERMES_SESSION_TOKEN__ || "";
+    const headers = token ? { Authorization: "Bearer " + token } : {};
+    const url = withBoard(`${API}/tasks/${encodeURIComponent(taskId)}/attachments`, boardSlug);
+    let chain = Promise.resolve();
+    files.forEach(function (f) {
+      chain = chain.then(function () {
+        const fd = new FormData();
+        fd.append("file", f, f.name);
+        return fetch(url, {
+          method: "POST",
+          headers: headers,
+          credentials: "same-origin",
+          body: fd,
+        }).then(function (resp) {
+          if (!resp.ok) {
+            return resp.text().then(function (txt) {
+              throw new Error(parseApiErrorMessage(new Error(resp.status + ": " + txt)));
+            });
+          }
+        });
+      });
+    });
+    return chain;
+  }
+
   // Order matches BOARD_COLUMNS in plugin_api.py.
   const COLUMN_ORDER = ["triage", "todo", "ready", "running", "blocked", "done"];
   // English fallback dictionaries — used when the i18n catalog is missing
@@ -745,7 +774,7 @@
       });
     }, [selectedIds, loadBoard, board]);
 
-    const createTask = useCallback(function (body) {
+    const createTask = useCallback(function (body, pendingFiles) {
       return SDK.fetchJSON(withBoard(`${API}/tasks`, board), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -758,9 +787,25 @@
         if (res && res.warning) {
           setError(tx(t, "taskCreatedWarning", "Task created, but: ") + res.warning);
         }
-        loadBoard();
-        loadBoardList();  // refresh counts in the switcher
-        return res;
+        const tid = res && res.task && res.task.id;
+        const files = pendingFiles && pendingFiles.length
+          ? Array.prototype.slice.call(pendingFiles) : [];
+        function finish() {
+          loadBoard();
+          loadBoardList();
+          return res;
+        }
+        if (!tid || !files.length) return finish();
+        return uploadTaskAttachments(tid, board, files)
+          .then(finish)
+          .catch(function (e) {
+            setError(
+              tx(t, "taskCreatedAttachmentFailed",
+                 "Task created, but attachment upload failed: ")
+              + parseApiErrorMessage(e),
+            );
+            return finish();
+          });
       });
     }, [loadBoard, loadBoardList, board, t]);
 
@@ -1055,6 +1100,7 @@
           allTasks: boardData.columns.reduce(function (acc, c) { return acc.concat(c.tasks); }, []),
           defaultCreateTenant: (config && config.default_tenant) || "",
           defaultBoardWorkdir: boardDefaultWorkdir,
+          boardSlug: board,
         }),
         selectedTaskId ? h(TaskDrawer, {
           taskId: selectedTaskId,
@@ -2424,6 +2470,7 @@
           onMoveSelected: props.onMoveSelected,
           onOpen: props.onOpen,
           onCreate: props.onCreate,
+          boardSlug: props.boardSlug,
           allTasks: props.allTasks,
           defaultCreateTenant: props.defaultCreateTenant,
           defaultBoardWorkdir: props.defaultBoardWorkdir,
@@ -2535,10 +2582,11 @@
       showCreate ? h(InlineCreate, {
         columnName: props.column.name,
         allTasks: props.allTasks,
+        boardSlug: props.boardSlug,
         defaultCreateTenant: props.defaultCreateTenant,
         defaultBoardWorkdir: props.defaultBoardWorkdir,
-        onSubmit: function (body) {
-          props.onCreate(body).then(function () { setShowCreate(false); });
+        onSubmit: function (body, pendingFiles) {
+          props.onCreate(body, pendingFiles).then(function () { setShowCreate(false); });
         },
         onCancel: function () { setShowCreate(false); },
       }) : null,
@@ -2801,6 +2849,22 @@
     // = backend default.
     const [goalMode, setGoalMode] = useState(false);
     const [goalMaxTurns, setGoalMaxTurns] = useState("");
+    const [pendingFiles, setPendingFiles] = useState([]);
+    const [attachErr, setAttachErr] = useState(null);
+    const createFileRef = useRef(null);
+
+    const addPendingFiles = function (fileList) {
+      const incoming = Array.prototype.slice.call(fileList || []);
+      if (!incoming.length) return;
+      setAttachErr(null);
+      setPendingFiles(function (prev) { return prev.concat(incoming); });
+    };
+
+    const removePendingFile = function (idx) {
+      setPendingFiles(function (prev) {
+        return prev.filter(function (_f, i) { return i !== idx; });
+      });
+    };
 
     const submit = function () {
       const trimmed = title.trim();
@@ -2838,12 +2902,15 @@
       }
       const tenantTrim = tenant.trim();
       if (tenantTrim) body.tenant = tenantTrim;
-      props.onSubmit(body);
+      const filesToUpload = pendingFiles.slice();
+      props.onSubmit(body, filesToUpload);
       setTitle(""); setAssignee(""); setPriority(0); setParent(""); setSkills("");
       const resetWs = workspaceDefaultsForBoard(props.defaultBoardWorkdir);
       setTenant(props.defaultCreateTenant || "");
       setWorkspaceKind(resetWs.kind); setWorkspacePath(resetWs.path);
       setGoalMode(false); setGoalMaxTurns("");
+      setPendingFiles([]);
+      setAttachErr(null);
     };
 
     const showPathInput = workspaceKind !== "scratch";
@@ -2962,6 +3029,45 @@
             `${task.id} — ${(task.title || "").slice(0, 50)}`);
         }),
       ),
+      h("div", { className: "hermes-kanban-inline-attachments" },
+        h("input", {
+          ref: createFileRef,
+          type: "file",
+          multiple: true,
+          style: { display: "none" },
+          onChange: function (e) {
+            addPendingFiles(e.target.files);
+            try { e.target.value = ""; } catch (_e) { /* ignore */ }
+          },
+        }),
+        h(Button, {
+          type: "button",
+          size: "sm",
+          variant: "outline",
+          onClick: function () { if (createFileRef.current) createFileRef.current.click(); },
+        }, tx(t, "addAttachment", "Add attachment")),
+        pendingFiles.length > 0
+          ? h("span", { className: "text-xs text-muted-foreground" },
+              `(${pendingFiles.length})`)
+          : null,
+        attachErr
+          ? h("div", { className: "text-xs text-destructive w-full" }, attachErr)
+          : null,
+        pendingFiles.length > 0
+          ? h("ul", { className: "hermes-kanban-inline-attachment-list" },
+              pendingFiles.map(function (f, idx) {
+                return h("li", { key: idx + ":" + (f.name || "file") },
+                  h("span", { className: "truncate", title: f.name || "" }, f.name || "file"),
+                  h("button", {
+                    type: "button",
+                    className: "hermes-kanban-drawer-close",
+                    title: tx(t, "removePendingAttachment", "Remove"),
+                    onClick: function () { removePendingFile(idx); },
+                  }, "×"),
+                );
+              }))
+          : null,
+      ),
       h("div", { className: "flex gap-2" },
         h(Button, {
           onClick: submit,
@@ -3048,33 +3154,17 @@
       if (!files.length) return;
       setUploadBusy(true);
       setUploadErr(null);
-      const token = window.__HERMES_SESSION_TOKEN__ || "";
-      const headers = token ? { Authorization: "Bearer " + token } : {};
-      const url = withBoard(`${API}/tasks/${encodeURIComponent(props.taskId)}/attachments`, boardSlug);
-      // Upload sequentially so a partial failure leaves a clear state.
-      let chain = Promise.resolve();
-      files.forEach(function (f) {
-        chain = chain.then(function () {
-          const fd = new FormData();
-          fd.append("file", f, f.name);
-          return fetch(url, { method: "POST", headers: headers, credentials: "same-origin", body: fd })
-            .then(function (resp) {
-              if (!resp.ok) {
-                return resp.text().then(function (txt) {
-                  throw new Error(parseApiErrorMessage(new Error(resp.status + ": " + txt)));
-                });
-              }
-            });
+      uploadTaskAttachments(props.taskId, boardSlug, files)
+        .then(function () {
+          load();
+          props.onRefresh();
+        })
+        .catch(function (e) {
+          setUploadErr(String(e.message || e));
+        })
+        .finally(function () {
+          setUploadBusy(false);
         });
-      });
-      chain.then(function () {
-        load();
-        props.onRefresh();
-      }).catch(function (e) {
-        setUploadErr(String(e.message || e));
-      }).finally(function () {
-        setUploadBusy(false);
-      });
     };
 
     const handleDeleteAttachment = function (attachmentId) {
