@@ -35,8 +35,11 @@
 | `scratch` | Wird bei Task-Ende gelöscht | Nur Wegwerf-Prototypen — **nie** Wiki oder Kanon-Doku |
 
 - Workspace-Pfad muss **absolut** sein (z. B. `/home/pi/projects/schlummerpost`).
-- Kind-Tasks vom Orchestrator: immer gleicher `dir:`-Pfad und passender `--tenant`.
-- Ohne expliziten Pfad übernehmen Tasks mit `dir`/`worktree` die Board-`default_workdir`.
+- **Neue Tasks** (UI, API, `kanban_create`, CLI ohne `--workspace`): wenn das Board eine
+  `default_workdir` hat, wird automatisch `dir` + dieser Pfad gesetzt.
+- Explizit ephemeral: `workspace_kind=scratch` bzw. CLI `--workspace scratch`.
+- Kind-Tasks vom Orchestrator: gleicher `dir:`-Pfad und passender `--tenant` (oder weglassen,
+  dann gilt die Board-`default_workdir`).
 
 ---
 

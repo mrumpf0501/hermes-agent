@@ -2204,6 +2204,7 @@ def test_dashboard_inline_create_includes_tenant_field():
     assert "body.tenant = tenantTrim" in js
     assert "tenantPlaceholder" in js
     assert "defaultCreateTenant: (config && config.default_tenant)" in js
+    assert "defaultBoardWorkdir" in js
 
 
 # ---------------------------------------------------------------------------
@@ -2280,6 +2281,23 @@ def test_docs_file_rejects_path_traversal(client, kanban_home, tmp_path):
         params={"board": "sec-board", "path": "../secret.md"},
     )
     assert r.status_code == 400
+
+
+def test_create_task_api_uses_board_default_workdir(client, kanban_home, tmp_path):
+    """POST /tasks without workspace fields inherits board default_workdir."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    kb.create_board("api-board", default_workdir=str(project))
+
+    r = client.post(
+        "/api/plugins/kanban/tasks",
+        params={"board": "api-board"},
+        json={"title": "from api", "assignee": "worker"},
+    )
+    assert r.status_code == 200
+    task = r.json()["task"]
+    assert task["workspace_kind"] == "dir"
+    assert task["workspace_path"] == str(project)
 
 
 def test_dashboard_project_docs_panel_wired():

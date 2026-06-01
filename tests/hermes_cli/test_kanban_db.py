@@ -2867,14 +2867,31 @@ def test_task_dict_survives_corrupt_created_at(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_create_task_scratch_without_workspace_ignores_board_default_workdir(kanban_home, monkeypatch):
-    """Scratch tasks must NOT inherit board.default_workdir — would point auto-cleanup
-    at the user's source tree on completion (#28818)."""
+def test_create_task_auto_workspace_uses_board_default_workdir(kanban_home, monkeypatch):
+    """Omitted workspace_kind inherits board.default_workdir as dir: (project wiki layout)."""
     default_wd = "/home/user/project"
     kb.create_board("work-proj", default_workdir=default_wd)
 
     with kb.connect(board="work-proj") as conn:
-        tid = kb.create_task(conn, title="scratch-task", board="work-proj")
+        tid = kb.create_task(conn, title="wiki-task", board="work-proj")
+        t = kb.get_task(conn, tid)
+    assert t is not None
+    assert t.workspace_kind == "dir"
+    assert t.workspace_path == default_wd
+
+
+def test_create_task_explicit_scratch_ignores_board_default_workdir(kanban_home, monkeypatch):
+    """Explicit scratch stays ephemeral even when the board has default_workdir."""
+    default_wd = "/home/user/project"
+    kb.create_board("work-proj", default_workdir=default_wd)
+
+    with kb.connect(board="work-proj") as conn:
+        tid = kb.create_task(
+            conn,
+            title="scratch-task",
+            workspace_kind="scratch",
+            board="work-proj",
+        )
         t = kb.get_task(conn, tid)
     assert t is not None
     assert t.workspace_kind == "scratch"
@@ -2882,7 +2899,7 @@ def test_create_task_scratch_without_workspace_ignores_board_default_workdir(kan
 
 
 def test_create_task_dir_without_workspace_inherits_board_default_workdir(kanban_home, monkeypatch):
-    """Board default_workdir is for persistent dir/worktree workspaces, not scratch."""
+    """Explicit dir without path still inherits board default_workdir."""
     default_wd = "/home/user/project"
     kb.create_board("work-proj-dir", default_workdir=default_wd)
 

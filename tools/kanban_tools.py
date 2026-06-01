@@ -743,7 +743,7 @@ def _handle_create(args: dict, **kw) -> str:
     # CLI / dashboard paths and on legacy hosts that don't set the env.
     session_id = args.get("session_id") or os.environ.get("HERMES_SESSION_ID")
     priority = args.get("priority")
-    workspace_kind = args.get("workspace_kind") or "scratch"
+    workspace_kind = args.get("workspace_kind")
     workspace_path = args.get("workspace_path")
     triage, bool_error = _parse_bool_arg(args, "triage")
     if bool_error:
@@ -781,7 +781,9 @@ def _handle_create(args: dict, **kw) -> str:
                 parents=tuple(parents),
                 tenant=tenant,
                 priority=int(priority) if priority is not None else 0,
-                workspace_kind=str(workspace_kind),
+                workspace_kind=(
+                    str(workspace_kind) if workspace_kind is not None else None
+                ),
                 workspace_path=workspace_path,
                 triage=triage,
                 idempotency_key=idempotency_key,
@@ -1199,9 +1201,11 @@ KANBAN_CREATE_SCHEMA = {
                 "type": "string",
                 "enum": ["scratch", "dir", "worktree"],
                 "description": (
-                    "Workspace flavor: 'scratch' (fresh tmp dir, "
-                    "default), 'dir' (shared directory, requires "
-                    "absolute workspace_path), 'worktree' (git worktree)."
+                    "Workspace flavor. Omit to use the board's "
+                    "default_workdir as 'dir' when configured, else "
+                    "'scratch'. Use 'scratch' explicitly for ephemeral "
+                    "tmp workspaces. 'dir' requires absolute "
+                    "workspace_path unless the board has default_workdir."
                 ),
             },
             "workspace_path": {

@@ -975,6 +975,12 @@
     if (!filteredBoard) return null;
 
     const renderMd = !config || config.render_markdown !== false;
+    const activeBoardMeta = boardList.find(function (b) { return b.slug === board; }) || null;
+    const boardDefaultWorkdir = (
+      activeBoardMeta && activeBoardMeta.default_workdir
+        ? String(activeBoardMeta.default_workdir)
+        : ""
+    );
 
     return h(ErrorBoundary, null,
       h("div", { className: "hermes-kanban flex flex-col gap-4" },
@@ -1048,6 +1054,7 @@
           onCreate: createTask,
           allTasks: boardData.columns.reduce(function (acc, c) { return acc.concat(c.tasks); }, []),
           defaultCreateTenant: (config && config.default_tenant) || "",
+          defaultBoardWorkdir: boardDefaultWorkdir,
         }),
         selectedTaskId ? h(TaskDrawer, {
           taskId: selectedTaskId,
@@ -2419,6 +2426,7 @@
           onCreate: props.onCreate,
           allTasks: props.allTasks,
           defaultCreateTenant: props.defaultCreateTenant,
+          defaultBoardWorkdir: props.defaultBoardWorkdir,
         });
       }),
       h(TrashDropZone, {
@@ -2528,6 +2536,7 @@
         columnName: props.column.name,
         allTasks: props.allTasks,
         defaultCreateTenant: props.defaultCreateTenant,
+        defaultBoardWorkdir: props.defaultBoardWorkdir,
         onSubmit: function (body) {
           props.onCreate(body).then(function () { setShowCreate(false); });
         },
@@ -2762,6 +2771,12 @@
   // Inline create (with parent selector)
   // -------------------------------------------------------------------------
 
+  function workspaceDefaultsForBoard(defaultWorkdir) {
+    const wd = (defaultWorkdir || "").trim();
+    if (wd) return { kind: "dir", path: wd };
+    return { kind: "scratch", path: "" };
+  }
+
   function InlineCreate(props) {
     const { t } = useI18n();
     const [title, setTitle] = useState("");
@@ -2770,12 +2785,15 @@
     const [parent, setParent] = useState("");
     const [skills, setSkills] = useState("");
     const [tenant, setTenant] = useState(props.defaultCreateTenant || "");
-    // Workspace controls. `scratch` (default) ignores path; `worktree` optionally
-    // takes a path (dispatcher derives one from the assignee profile otherwise);
-    // `dir` requires a path. Backend enforces the rule — we only hide/show the
-    // input here to save vertical space in the common `scratch` case.
-    const [workspaceKind, setWorkspaceKind] = useState("scratch");
-    const [workspacePath, setWorkspacePath] = useState("");
+    const initWs = workspaceDefaultsForBoard(props.defaultBoardWorkdir);
+    const [workspaceKind, setWorkspaceKind] = useState(initWs.kind);
+    const [workspacePath, setWorkspacePath] = useState(initWs.path);
+
+    useEffect(function () {
+      const next = workspaceDefaultsForBoard(props.defaultBoardWorkdir);
+      setWorkspaceKind(next.kind);
+      setWorkspacePath(next.path);
+    }, [props.defaultBoardWorkdir]);
     // Goal-mode: when on, the dispatched worker runs the Ralph-style /goal
     // loop — a judge re-checks the card after each turn and the worker keeps
     // going in the same session until done, or the turn budget runs out
@@ -2802,13 +2820,15 @@
         .map(function (s) { return s.trim(); })
         .filter(function (s) { return s.length > 0; });
       if (skillList.length > 0) body.skills = skillList;
-      // Only send workspace_kind when it's non-default. Keeps the request
-      // shape small and interoperable with older dispatcher versions.
-      if (workspaceKind && workspaceKind !== "scratch") {
+      // Omit workspace_kind so the backend applies board default_workdir.
+      // Send scratch explicitly when the user chose ephemeral workspace.
+      if (workspaceKind === "scratch") {
+        body.workspace_kind = "scratch";
+      } else if (workspaceKind) {
         body.workspace_kind = workspaceKind;
+        const wpTrim = workspacePath.trim();
+        if (wpTrim) body.workspace_path = wpTrim;
       }
-      const wpTrim = workspacePath.trim();
-      if (wpTrim) body.workspace_path = wpTrim;
       // Goal-mode toggle. Only send the keys when enabled so the request
       // shape stays small and old dispatchers ignore it cleanly.
       if (goalMode) {
@@ -2820,8 +2840,9 @@
       if (tenantTrim) body.tenant = tenantTrim;
       props.onSubmit(body);
       setTitle(""); setAssignee(""); setPriority(0); setParent(""); setSkills("");
+      const resetWs = workspaceDefaultsForBoard(props.defaultBoardWorkdir);
       setTenant(props.defaultCreateTenant || "");
-      setWorkspaceKind("scratch"); setWorkspacePath("");
+      setWorkspaceKind(resetWs.kind); setWorkspacePath(resetWs.path);
       setGoalMode(false); setGoalMaxTurns("");
     };
 
@@ -2916,7 +2937,7 @@
       h("div", { className: "flex gap-2" },
         h(Select, Object.assign({
           value: workspaceKind,
-          title: "scratch: isolated temp dir (default). worktree: git worktree on the assignee profile. dir: exact path (required below).",
+          title: "dir: board project folder (default when default_workdir is set). scratch: ephemeral tmp. worktree: git worktree.",
           className: "h-7 text-xs w-28",
         }, selectChangeHandler(setWorkspaceKind)),
           h(SelectOption, { value: "scratch" }, "scratch"),

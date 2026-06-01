@@ -1992,6 +1992,42 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     return normalize_profile_name(assignee)
 
 
+def resolve_new_task_workspace(
+    workspace_kind: Optional[str],
+    workspace_path: Optional[str],
+    *,
+    board: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    """Resolve workspace fields for :func:`create_task`.
+
+    When the caller omits ``workspace_kind`` (``None``), the board's
+    ``default_workdir`` becomes a ``dir`` workspace when configured;
+    otherwise the task uses ephemeral ``scratch``.
+
+    An explicit ``workspace_kind="scratch"`` is never upgraded — callers
+    that want a throwaway workspace must say so explicitly.
+    """
+    slug = _normalize_board_slug(board) if board else get_current_board()
+    meta = read_board_metadata(slug)
+    board_default = (meta.get("default_workdir") or "").strip() or None
+
+    if workspace_path is not None and str(workspace_path).strip():
+        kind = workspace_kind if workspace_kind is not None else "scratch"
+        return kind, str(workspace_path).strip()
+
+    if workspace_kind is None:
+        if board_default:
+            return "dir", board_default
+        return "scratch", None
+
+    if workspace_kind == "scratch":
+        return "scratch", None
+
+    if board_default and workspace_kind in {"dir", "worktree"}:
+        return workspace_kind, board_default
+    return workspace_kind, None
+
+
 def create_task(
     conn: sqlite3.Connection,
     *,
@@ -1999,7 +2035,7 @@ def create_task(
     body: Optional[str] = None,
     assignee: Optional[str] = None,
     created_by: Optional[str] = None,
-    workspace_kind: str = "scratch",
+    workspace_kind: Optional[str] = None,
     workspace_path: Optional[str] = None,
     branch_name: Optional[str] = None,
     tenant: Optional[str] = None,
@@ -2047,6 +2083,11 @@ def create_task(
         raise ValueError(
             f"initial_status must be one of {sorted(VALID_INITIAL_STATUSES)}"
         )
+    workspace_kind, workspace_path = resolve_new_task_workspace(
+        workspace_kind,
+        workspace_path,
+        board=board,
+    )
     if workspace_kind not in VALID_WORKSPACE_KINDS:
         raise ValueError(
             f"workspace_kind must be one of {sorted(VALID_WORKSPACE_KINDS)}, "
@@ -2119,22 +2160,6 @@ def create_task(
             return row["id"]
 
     now = int(time.time())
-
-    # Resolve workspace_path from board-level default_workdir when the
-    # caller did not specify one explicitly. Board defaults represent
-    # persistent project checkouts, so only persistent workspace kinds may
-    # inherit them. Scratch workspaces are auto-deleted on completion and
-    # must stay under the per-board scratch root created by
-    # ``resolve_workspace``; inheriting ``default_workdir`` for a scratch
-    # task would point cleanup at the user's source tree (#28818). The
-    # containment guard in ``_cleanup_workspace`` is the safety rail, but
-    # we also stop the bad state from being created in the first place.
-    if workspace_path is None and workspace_kind in {"dir", "worktree"}:
-        board_slug = board if board else get_current_board()
-        board_meta = read_board_metadata(board_slug)
-        board_default = board_meta.get("default_workdir")
-        if board_default:
-            workspace_path = str(board_default)
 
     # Retry once on the extremely unlikely id collision.
     for attempt in range(2):
