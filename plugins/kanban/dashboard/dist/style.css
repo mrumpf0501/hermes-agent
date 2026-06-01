@@ -320,6 +320,75 @@
   min-width: 0;
 }
 
+.hermes-kanban-inline-create-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.hermes-kanban-inline-create-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hermes-kanban-inline-options-toggle {
+  flex-shrink: 0;
+  height: 1.75rem;
+  padding: 0 0.45rem;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--color-muted-foreground);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 0.25rem);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hermes-kanban-inline-options-toggle:hover {
+  color: var(--color-foreground);
+  background: color-mix(in srgb, var(--color-muted) 40%, transparent);
+}
+
+.hermes-kanban-icon-btn {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  font-size: 0.95rem;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 0.25rem);
+  cursor: pointer;
+}
+
+.hermes-kanban-icon-btn:hover,
+.hermes-kanban-icon-btn--active {
+  background: color-mix(in srgb, var(--color-muted) 40%, transparent);
+}
+
+.hermes-kanban-icon-btn-badge {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  padding: 0 0.2rem;
+  font-size: 0.6rem;
+  font-weight: 600;
+  line-height: 0.95rem;
+  text-align: center;
+  color: var(--color-primary-foreground, #fff);
+  background: var(--color-primary, currentColor);
+  border-radius: 999px;
+}
+
 .hermes-kanban-inline-attachments {
   display: flex;
   flex-wrap: wrap;

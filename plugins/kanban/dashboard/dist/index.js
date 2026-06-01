@@ -2801,6 +2801,10 @@
               ? h("span", { className: "hermes-kanban-count",
                             title: `${t.comment_count} comment${t.comment_count === 1 ? "" : "s"} on this task` }, "💬 ", t.comment_count)
               : null,
+            t.attachment_count > 0
+              ? h("span", { className: "hermes-kanban-count",
+                            title: `${t.attachment_count} attachment${t.attachment_count === 1 ? "" : "s"} on this task` }, "📎 ", t.attachment_count)
+              : null,
             t.link_counts && (t.link_counts.parents + t.link_counts.children) > 0
               ? h("span", { className: "hermes-kanban-count",
                             title: `${t.link_counts.parents} parent${t.link_counts.parents === 1 ? "" : "s"}, ${t.link_counts.children} child${t.link_counts.children === 1 ? "" : "ren"}. Children stay blocked until their parent is done.` },
@@ -2851,6 +2855,7 @@
     const [goalMaxTurns, setGoalMaxTurns] = useState("");
     const [pendingFiles, setPendingFiles] = useState([]);
     const [attachErr, setAttachErr] = useState(null);
+    const [showAdvanced, setShowAdvanced] = useState(false);
     const createFileRef = useRef(null);
 
     const addPendingFiles = function (fileList) {
@@ -2934,7 +2939,7 @@
         className: "text-sm min-h-[2rem] max-h-32 resize-y w-full border border-input bg-transparent px-2 py-1 rounded-md focus:outline-none focus:ring-2 focus:ring-ring",
         rows: 2,
       }),
-      h("div", { className: "flex gap-2" },
+      h("div", { className: "hermes-kanban-inline-create-toolbar" },
         h(Input, {
           value: assignee,
           onChange: function (e) { setAssignee(e.target.value); },
@@ -2950,86 +2955,6 @@
           autoCorrect: "off",
           spellCheck: false,
         }),
-        h(Input, {
-          type: "number",
-          value: priority,
-          onChange: function (e) { setPriority(e.target.value); },
-          placeholder: "pri",
-          className: "h-7 text-xs w-16",
-          title: "Priority. Higher-priority tasks are claimed first by the dispatcher. 0 = default.",
-        }),
-      ),
-      h(Input, {
-        value: skills,
-        onChange: function (e) { setSkills(e.target.value); },
-        placeholder: tx(t, "skillsPlaceholder",
-          "skills (optional, comma-separated): translation, github-code-review"),
-        title: "Force-load these skills into the worker (in addition to the built-in kanban-worker).",
-        className: "h-7 text-xs",
-      }),
-      h(Input, {
-        value: tenant,
-        onChange: function (e) { setTenant(e.target.value); },
-        placeholder: tx(t, "tenantPlaceholder", "tenant (optional)"),
-        title: "Namespace within this board (customer, project, team). Used for filtering and shown on the card.",
-        className: "h-7 text-xs",
-        style: { textTransform: "none" },
-        autoCapitalize: "none",
-        autoCorrect: "off",
-        spellCheck: false,
-      }),
-      h("div", { className: "flex gap-2 items-center" },
-        h("label", {
-          className: "flex items-center gap-1.5 text-xs cursor-pointer select-none",
-          title: "Goal mode: the worker keeps going in the same session until a judge agrees the card is done (or the turn budget runs out, which blocks it for review). Best for open-ended cards one shot rarely finishes.",
-        },
-          h("input", {
-            type: "checkbox",
-            checked: goalMode,
-            onChange: function (e) { setGoalMode(!!e.target.checked); },
-            className: "h-3.5 w-3.5 accent-current",
-          }),
-          tx(t, "goalMode", "goal mode"),
-        ),
-        goalMode ? h(Input, {
-          type: "number",
-          value: goalMaxTurns,
-          onChange: function (e) { setGoalMaxTurns(e.target.value); },
-          placeholder: tx(t, "goalMaxTurns", "max turns (default 20)"),
-          className: "h-7 text-xs w-40",
-          title: "Turn budget for the goal loop. Blank = backend default (20).",
-          min: 1,
-        }) : null,
-      ),
-      h("div", { className: "flex gap-2" },
-        h(Select, Object.assign({
-          value: workspaceKind,
-          title: "dir: board project folder (default when default_workdir is set). scratch: ephemeral tmp. worktree: git worktree.",
-          className: "h-7 text-xs w-28",
-        }, selectChangeHandler(setWorkspaceKind)),
-          h(SelectOption, { value: "scratch" }, "scratch"),
-          h(SelectOption, { value: "worktree" }, "worktree"),
-          h(SelectOption, { value: "dir" }, "dir"),
-        ),
-        showPathInput ? h(Input, {
-          value: workspacePath,
-          onChange: function (e) { setWorkspacePath(e.target.value); },
-          placeholder: pathPlaceholder,
-          className: "h-7 text-xs flex-1",
-        }) : null,
-      ),
-      h(Select, Object.assign({
-        value: parent,
-        className: "h-7 text-xs",
-        title: "Optional parent task. A child stays blocked in its current column until the parent is marked done.",
-      }, selectChangeHandler(setParent)),
-        h(SelectOption, { value: "" }, tx(t, "noParent", "— no parent —")),
-        (props.allTasks || []).map(function (task) {
-          return h(SelectOption, { key: task.id, value: task.id },
-            `${task.id} — ${(task.title || "").slice(0, 50)}`);
-        }),
-      ),
-      h("div", { className: "hermes-kanban-inline-attachments" },
         h("input", {
           ref: createFileRef,
           type: "file",
@@ -3040,34 +2965,138 @@
             try { e.target.value = ""; } catch (_e) { /* ignore */ }
           },
         }),
-        h(Button, {
+        h("button", {
           type: "button",
-          size: "sm",
-          variant: "outline",
+          className: cn(
+            "hermes-kanban-icon-btn",
+            pendingFiles.length > 0 ? "hermes-kanban-icon-btn--active" : "",
+          ),
+          title: tx(t, "addAttachment", "Add attachment"),
+          "aria-label": tx(t, "addAttachment", "Add attachment"),
           onClick: function () { if (createFileRef.current) createFileRef.current.click(); },
-        }, tx(t, "addAttachment", "Add attachment")),
-        pendingFiles.length > 0
-          ? h("span", { className: "text-xs text-muted-foreground" },
-              `(${pendingFiles.length})`)
-          : null,
-        attachErr
-          ? h("div", { className: "text-xs text-destructive w-full" }, attachErr)
-          : null,
-        pendingFiles.length > 0
-          ? h("ul", { className: "hermes-kanban-inline-attachment-list" },
-              pendingFiles.map(function (f, idx) {
-                return h("li", { key: idx + ":" + (f.name || "file") },
-                  h("span", { className: "truncate", title: f.name || "" }, f.name || "file"),
-                  h("button", {
-                    type: "button",
-                    className: "hermes-kanban-drawer-close",
-                    title: tx(t, "removePendingAttachment", "Remove"),
-                    onClick: function () { removePendingFile(idx); },
-                  }, "×"),
-                );
-              }))
-          : null,
+        },
+          "📎",
+          pendingFiles.length > 0
+            ? h("span", { className: "hermes-kanban-icon-btn-badge" }, pendingFiles.length)
+            : null,
+        ),
+        h("button", {
+          type: "button",
+          className: "hermes-kanban-inline-options-toggle",
+          "aria-expanded": showAdvanced,
+          title: showAdvanced
+            ? tx(t, "hideAdvancedOptions", "Hide priority, skills, tenant, goal mode, workspace, parent")
+            : tx(t, "showAdvancedOptions", "Show priority, skills, tenant, goal mode, workspace, parent"),
+          onClick: function () { setShowAdvanced(function (v) { return !v; }); },
+        },
+          showAdvanced
+            ? tx(t, "hideOptions", "Less ▴")
+            : tx(t, "showOptions", "More ▾"),
+        ),
       ),
+      showAdvanced
+        ? h("div", { className: "hermes-kanban-inline-create-advanced" },
+            h(Input, {
+              type: "number",
+              value: priority,
+              onChange: function (e) { setPriority(e.target.value); },
+              placeholder: tx(t, "priorityPlaceholder", "priority"),
+              className: "h-7 text-xs",
+              title: "Priority. Higher-priority tasks are claimed first by the dispatcher. 0 = default.",
+            }),
+            h(Input, {
+              value: skills,
+              onChange: function (e) { setSkills(e.target.value); },
+              placeholder: tx(t, "skillsPlaceholder",
+                "skills (optional, comma-separated): translation, github-code-review"),
+              title: "Force-load these skills into the worker (in addition to the built-in kanban-worker).",
+              className: "h-7 text-xs",
+            }),
+            h(Input, {
+              value: tenant,
+              onChange: function (e) { setTenant(e.target.value); },
+              placeholder: tx(t, "tenantPlaceholder", "tenant (optional)"),
+              title: "Namespace within this board (customer, project, team). Used for filtering and shown on the card.",
+              className: "h-7 text-xs",
+              style: { textTransform: "none" },
+              autoCapitalize: "none",
+              autoCorrect: "off",
+              spellCheck: false,
+            }),
+            h("div", { className: "flex gap-2 items-center" },
+              h("label", {
+                className: "flex items-center gap-1.5 text-xs cursor-pointer select-none",
+                title: "Goal mode: the worker keeps going in the same session until a judge agrees the card is done (or the turn budget runs out, which blocks it for review). Best for open-ended cards one shot rarely finishes.",
+              },
+                h("input", {
+                  type: "checkbox",
+                  checked: goalMode,
+                  onChange: function (e) { setGoalMode(!!e.target.checked); },
+                  className: "h-3.5 w-3.5 accent-current",
+                }),
+                tx(t, "goalMode", "goal mode"),
+              ),
+              goalMode ? h(Input, {
+                type: "number",
+                value: goalMaxTurns,
+                onChange: function (e) { setGoalMaxTurns(e.target.value); },
+                placeholder: tx(t, "goalMaxTurns", "max turns (default 20)"),
+                className: "h-7 text-xs w-40",
+                title: "Turn budget for the goal loop. Blank = backend default (20).",
+                min: 1,
+              }) : null,
+            ),
+            h("div", { className: "flex gap-2" },
+              h(Select, Object.assign({
+                value: workspaceKind,
+                title: "dir: board project folder (default when default_workdir is set). scratch: ephemeral tmp. worktree: git worktree.",
+                className: "h-7 text-xs w-28",
+              }, selectChangeHandler(setWorkspaceKind)),
+                h(SelectOption, { value: "scratch" }, "scratch"),
+                h(SelectOption, { value: "worktree" }, "worktree"),
+                h(SelectOption, { value: "dir" }, "dir"),
+              ),
+              showPathInput ? h(Input, {
+                value: workspacePath,
+                onChange: function (e) { setWorkspacePath(e.target.value); },
+                placeholder: pathPlaceholder,
+                className: "h-7 text-xs flex-1",
+              }) : null,
+            ),
+            h(Select, Object.assign({
+              value: parent,
+              className: "h-7 text-xs",
+              title: "Optional parent task. A child stays blocked in its current column until the parent is marked done.",
+            }, selectChangeHandler(setParent)),
+              h(SelectOption, { value: "" }, tx(t, "noParent", "— no parent —")),
+              (props.allTasks || []).map(function (task) {
+                return h(SelectOption, { key: task.id, value: task.id },
+                  `${task.id} — ${(task.title || "").slice(0, 50)}`);
+              }),
+            ),
+          )
+        : null,
+      pendingFiles.length > 0 || attachErr
+        ? h("div", { className: "hermes-kanban-inline-attachments" },
+            attachErr
+              ? h("div", { className: "text-xs text-destructive w-full" }, attachErr)
+              : null,
+            pendingFiles.length > 0
+              ? h("ul", { className: "hermes-kanban-inline-attachment-list" },
+                  pendingFiles.map(function (f, idx) {
+                    return h("li", { key: idx + ":" + (f.name || "file") },
+                      h("span", { className: "truncate", title: f.name || "" }, f.name || "file"),
+                      h("button", {
+                        type: "button",
+                        className: "hermes-kanban-drawer-close",
+                        title: tx(t, "removePendingAttachment", "Remove"),
+                        onClick: function () { removePendingFile(idx); },
+                      }, "×"),
+                    );
+                  }))
+              : null,
+          )
+        : null,
       h("div", { className: "flex gap-2" },
         h(Button, {
           onClick: submit,

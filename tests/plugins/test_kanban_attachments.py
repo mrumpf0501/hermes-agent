@@ -289,3 +289,28 @@ def test_upload_unknown_task_404(client):
 
 def test_download_unknown_attachment_404(client):
     assert client.get("/api/plugins/kanban/attachments/424242").status_code == 404
+
+
+def test_board_surfaces_attachment_count(client):
+    """Card list includes attachment_count so the UI can show a clip badge."""
+    task_id = _create_task_via_api(client)
+    r = client.get("/api/plugins/kanban/board")
+    assert r.status_code == 200
+    row = next(
+        t for col in r.json()["columns"] for t in col["tasks"]
+        if t["id"] == task_id
+    )
+    assert row.get("attachment_count", 0) == 0
+
+    r = client.post(
+        f"/api/plugins/kanban/tasks/{task_id}/attachments",
+        files={"file": ("brief.pdf", b"%PDF", "application/pdf")},
+    )
+    assert r.status_code == 200, r.text
+
+    r = client.get("/api/plugins/kanban/board")
+    row = next(
+        t for col in r.json()["columns"] for t in col["tasks"]
+        if t["id"] == task_id
+    )
+    assert row["attachment_count"] == 1

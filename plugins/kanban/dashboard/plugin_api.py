@@ -416,6 +416,12 @@ def get_board(
                 "SELECT task_id, COUNT(*) AS n FROM task_comments GROUP BY task_id"
             )
         }
+        attachment_counts: dict[str, int] = {
+            r["task_id"]: r["n"]
+            for r in conn.execute(
+                "SELECT task_id, COUNT(*) AS n FROM task_attachments GROUP BY task_id"
+            )
+        }
 
         # Progress rollup: for each parent, how many children are done / total.
         # One pass over task_links joined with child status — cheaper than
@@ -458,6 +464,7 @@ def get_board(
             d = _task_dict(t, latest_summary=preview)
             d["link_counts"] = link_counts.get(t.id, {"parents": 0, "children": 0})
             d["comment_count"] = comment_counts.get(t.id, 0)
+            d["attachment_count"] = attachment_counts.get(t.id, 0)
             d["progress"] = progress.get(t.id)  # None when the task has no children
             diags = diagnostics_per_task.get(t.id)
             if diags:
