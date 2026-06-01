@@ -2204,3 +2204,90 @@ def test_dashboard_inline_create_includes_tenant_field():
     assert "body.tenant = tenantTrim" in js
     assert "tenantPlaceholder" in js
     assert "defaultCreateTenant: (config && config.default_tenant)" in js
+
+
+# ---------------------------------------------------------------------------
+# Project documentation (/docs)
+# ---------------------------------------------------------------------------
+
+
+def test_docs_unconfigured_board(client):
+    r = client.get("/api/plugins/kanban/docs")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["configured"] is False
+    assert data["entries"] == []
+    assert "default_workdir" in data["message"]
+
+
+def test_docs_lists_wiki_pages(client, kanban_home, tmp_path):
+    project = tmp_path / "schlummerpost"
+    wiki = project / "docs" / "wiki"
+    wiki.mkdir(parents=True)
+    (wiki / "README.md").write_text("# Index\n", encoding="utf-8")
+    (wiki / "produkt.md").write_text("## Produkt\n", encoding="utf-8")
+
+    kb.create_board("wiki-board", default_workdir=str(project))
+
+    r = client.get("/api/plugins/kanban/docs", params={"board": "wiki-board"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["configured"] is True
+    assert data["docs_label"] == "docs/wiki"
+    paths = {e["path"] for e in data["entries"]}
+    assert paths == {"README.md", "produkt.md"}
+    assert data["default_file"] == "README.md"
+
+
+def test_docs_file_frontmatter_and_sources(client, kanban_home, tmp_path):
+    project = tmp_path / "proj"
+    wiki = project / "docs" / "wiki"
+    wiki.mkdir(parents=True)
+    (wiki / "page.md").write_text(
+        "---\n"
+        "title: Test Page\n"
+        "sources:\n"
+        "  - task: t_deadbeef\n"
+        "    action: updated\n"
+        "---\n"
+        "\n"
+        "Body text.\n",
+        encoding="utf-8",
+    )
+    kb.create_board("doc-board", default_workdir=str(project))
+
+    r = client.get(
+        "/api/plugins/kanban/docs/file",
+        params={"board": "doc-board", "path": "page.md"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["title"] == "Test Page"
+    assert "Body text." in data["body"]
+    assert data["sources"] == [{"task": "t_deadbeef", "action": "updated"}]
+
+
+def test_docs_file_rejects_path_traversal(client, kanban_home, tmp_path):
+    project = tmp_path / "proj"
+    wiki = project / "docs" / "wiki"
+    wiki.mkdir(parents=True)
+    (wiki / "ok.md").write_text("ok", encoding="utf-8")
+    (project / "secret.md").write_text("secret", encoding="utf-8")
+    kb.create_board("sec-board", default_workdir=str(project))
+
+    r = client.get(
+        "/api/plugins/kanban/docs/file",
+        params={"board": "sec-board", "path": "../secret.md"},
+    )
+    assert r.status_code == 400
+
+
+def test_dashboard_project_docs_panel_wired():
+    repo_root = Path(__file__).resolve().parents[2]
+    js = (repo_root / "plugins" / "kanban" / "dashboard" / "dist" / "index.js").read_text()
+    css = (repo_root / "plugins" / "kanban" / "dashboard" / "dist" / "style.css").read_text()
+
+    assert "ProjectDocsPanel" in js
+    assert "${API}/docs" in js
+    assert "onToggleDocs" in js
+    assert "hermes-kanban-docs" in css

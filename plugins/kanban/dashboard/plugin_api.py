@@ -2085,6 +2085,246 @@ def switch_board(slug: str):
 
 
 # ---------------------------------------------------------------------------
+# Project documentation (docs/wiki under board default_workdir)
+# ---------------------------------------------------------------------------
+
+_DOCS_CANDIDATE_DIRS = ("docs/wiki", "docs")
+_DOCS_MAX_FILES = 500
+_DOCS_MAX_FILE_BYTES = 512 * 1024
+_DOCS_ALLOWED_SUFFIXES = {".md", ".markdown"}
+
+
+def _project_workdir_for_board(board: Optional[str]) -> Optional[Path]:
+    """Return the resolved board ``default_workdir``, or ``None``."""
+    slug = _resolve_board(board)
+    if slug is None:
+        slug = kanban_db.get_current_board()
+    meta = kanban_db.read_board_metadata(slug)
+    raw = (meta.get("default_workdir") or "").strip()
+    if not raw:
+        return None
+    try:
+        path = Path(raw).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    if not path.is_dir():
+        return None
+    return path
+
+
+def _resolve_docs_root(board: Optional[str]) -> tuple[Optional[Path], Optional[Path], str]:
+    """Return ``(workdir, docs_root, label)`` for the board's project docs.
+
+    ``label`` is the relative segment under workdir (``docs/wiki`` or ``docs``),
+    or ``""`` when no documentation directory exists.
+    """
+    workdir = _project_workdir_for_board(board)
+    if workdir is None:
+        return None, None, ""
+    for rel in _DOCS_CANDIDATE_DIRS:
+        candidate = (workdir / rel).resolve()
+        try:
+            if not candidate.is_relative_to(workdir):
+                continue
+        except ValueError:
+            continue
+        if candidate.is_dir():
+            return workdir, candidate, rel.replace("\\", "/")
+    return workdir, None, ""
+
+
+def _safe_doc_relpath(root: Path, rel_path: str) -> str:
+    """Validate a relative path under ``root``; return normalised posix relpath."""
+    if not rel_path or not str(rel_path).strip():
+        raise HTTPException(status_code=400, detail="path is required")
+    normalised = str(rel_path).replace("\\", "/").strip().lstrip("/")
+    if not normalised:
+        raise HTTPException(status_code=400, detail="path is required")
+    parts = normalised.split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        raise HTTPException(status_code=400, detail="invalid path")
+    target = (root / normalised).resolve()
+    try:
+        if not target.is_relative_to(root.resolve()):
+            raise HTTPException(status_code=403, detail="path outside documentation root")
+    except ValueError:
+        raise HTTPException(status_code=403, detail="path outside documentation root")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    if target.suffix.lower() not in _DOCS_ALLOWED_SUFFIXES:
+        raise HTTPException(status_code=404, detail="not a markdown file")
+    return normalised
+
+
+def _split_markdown_frontmatter(text: str) -> tuple[Optional[dict[str, Any]], str]:
+    """Parse optional YAML frontmatter; return ``(meta, body)``."""
+    if not text.startswith("---"):
+        return None, text
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return None, text
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx is None:
+        return None, text
+    fm_text = "".join(lines[1:end_idx])
+    body = "".join(lines[end_idx + 1 :])
+    if not fm_text.strip():
+        return None, body
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(fm_text)
+    except Exception:
+        return None, body
+    if isinstance(parsed, dict):
+        return parsed, body
+    return None, body
+
+
+def _walk_markdown_entries(root: Path) -> list[dict[str, str]]:
+    """Collect ``.md`` files under ``root`` (relative paths, sorted)."""
+    entries: list[dict[str, str]] = []
+    root_resolved = root.resolve()
+    for dirpath, _dirnames, filenames in os.walk(root_resolved):
+        current = Path(dirpath)
+        try:
+            if not current.is_relative_to(root_resolved):
+                continue
+        except ValueError:
+            continue
+        for name in sorted(filenames):
+            if len(entries) >= _DOCS_MAX_FILES:
+                return entries
+            if Path(name).suffix.lower() not in _DOCS_ALLOWED_SUFFIXES:
+                continue
+            full = (current / name).resolve()
+            try:
+                if not full.is_relative_to(root_resolved):
+                    continue
+            except ValueError:
+                continue
+            rel = full.relative_to(root_resolved).as_posix()
+            title = Path(name).stem.replace("-", " ").replace("_", " ")
+            if rel.lower() == "readme.md":
+                title = "README"
+            entries.append({"path": rel, "title": title})
+    entries.sort(key=lambda e: (0 if e["path"].lower() == "readme.md" else 1, e["path"].lower()))
+    return entries
+
+
+def _extract_task_sources(frontmatter: Optional[dict[str, Any]]) -> list[dict[str, str]]:
+    """Normalise ``sources`` from wiki frontmatter for the UI."""
+    if not frontmatter:
+        return []
+    raw = frontmatter.get("sources")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("task") or "").strip()
+        if not task_id.startswith("t_"):
+            continue
+        action = str(item.get("action") or "updated").strip() or "updated"
+        out.append({"task": task_id, "action": action})
+    return out
+
+
+@router.get("/docs")
+def list_project_docs(board: Optional[str] = Query(None)):
+    """List markdown pages under the board's project documentation tree."""
+    workdir, docs_root, label = _resolve_docs_root(board)
+    slug = _resolve_board(board) or kanban_db.get_current_board()
+    if workdir is None:
+        return {
+            "board": slug,
+            "configured": False,
+            "workdir": "",
+            "docs_root": "",
+            "docs_label": "",
+            "entries": [],
+            "default_file": "",
+            "message": (
+                "No default_workdir on this board. Set one with "
+                "`hermes kanban boards set-default-workdir <slug> <path>`."
+            ),
+        }
+    if docs_root is None:
+        return {
+            "board": slug,
+            "configured": True,
+            "workdir": str(workdir),
+            "docs_root": "",
+            "docs_label": "",
+            "entries": [],
+            "default_file": "",
+            "message": (
+                f"Project directory exists but neither docs/wiki/ nor docs/ "
+                f"was found under {workdir}."
+            ),
+        }
+    entries = _walk_markdown_entries(docs_root)
+    default_file = ""
+    for e in entries:
+        if e["path"].lower() == "readme.md":
+            default_file = e["path"]
+            break
+    if not default_file and entries:
+        default_file = entries[0]["path"]
+    return {
+        "board": slug,
+        "configured": True,
+        "workdir": str(workdir),
+        "docs_root": str(docs_root),
+        "docs_label": label,
+        "entries": entries,
+        "default_file": default_file,
+        "message": "",
+    }
+
+
+@router.get("/docs/file")
+def read_project_doc(
+    path: str = Query(..., description="Path relative to the docs root"),
+    board: Optional[str] = Query(None),
+):
+    """Return one markdown page (body + parsed frontmatter + task sources)."""
+    _workdir, docs_root, label = _resolve_docs_root(board)
+    if docs_root is None:
+        raise HTTPException(
+            status_code=404,
+            detail="project documentation not available for this board",
+        )
+    rel = _safe_doc_relpath(docs_root, path)
+    target = (docs_root / rel).resolve()
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="file not found") from exc
+    if size > _DOCS_MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="file too large to display")
+    try:
+        text = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=415, detail="file is not valid UTF-8 text")
+    frontmatter, body = _split_markdown_frontmatter(text)
+    return {
+        "path": rel,
+        "docs_label": label,
+        "title": (frontmatter or {}).get("title") or Path(rel).stem,
+        "content": text,
+        "body": body,
+        "frontmatter": frontmatter,
+        "sources": _extract_task_sources(frontmatter),
+    }
+
+
+# ---------------------------------------------------------------------------
 # WebSocket: /events?since=<event_id>
 # ---------------------------------------------------------------------------
 

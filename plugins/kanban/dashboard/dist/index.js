@@ -488,6 +488,7 @@
     const [laneByProfile, setLaneByProfile] = useState(true);
     const [configApplied, setConfigApplied] = useState(false);
 
+    const [showDocs, setShowDocs] = useState(false);
     const [selectedTaskId, setSelectedTaskId] = useState(null);
     const [selectedIds, setSelectedIds] = useState(() => new Set());
     const [lastSelectedId, setLastSelectedId] = useState(null);
@@ -1002,6 +1003,8 @@
           includeArchived, setIncludeArchived,
           laneByProfile, setLaneByProfile,
           search, setSearch,
+          docsOpen: showDocs,
+          onToggleDocs: function () { setShowDocs(function (v) { return !v; }); },
           onNudgeDispatch: function () {
             SDK.fetchJSON(withBoard(`${API}/dispatch?max=8`, board), { method: "POST" })
               .then(loadBoard)
@@ -1009,6 +1012,15 @@
           },
           onRefresh: loadBoard,
         }),
+        showDocs ? h(ProjectDocsPanel, {
+          boardSlug: board,
+          renderMarkdown: renderMd,
+          onClose: function () { setShowDocs(false); },
+          onOpenTask: function (taskId) {
+            setSelectedTaskId(taskId);
+            loadBoard();
+          },
+        }) : null,
        selectedIds.size > 0 ? h(BulkActionBar, {
          count: selectedIds.size,
          assignees: (boardData && boardData.assignees) || [],
@@ -1953,6 +1965,159 @@
   // -------------------------------------------------------------------------
   // Toolbar
   // -------------------------------------------------------------------------
+  // Project documentation panel (docs/wiki under board default_workdir)
+  // -------------------------------------------------------------------------
+
+  function ProjectDocsPanel(props) {
+    const { t } = useI18n();
+    const [meta, setMeta] = useState(null);
+    const [entries, setEntries] = useState([]);
+    const [selectedPath, setSelectedPath] = useState("");
+    const [fileData, setFileData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [fileLoading, setFileLoading] = useState(false);
+    const [err, setErr] = useState(null);
+
+    const loadTree = useCallback(function () {
+      setLoading(true);
+      setErr(null);
+      return SDK.fetchJSON(withBoard(`${API}/docs`, props.boardSlug))
+        .then(function (data) {
+          setMeta(data);
+          const list = (data && data.entries) || [];
+          setEntries(list);
+          setSelectedPath(function (prev) {
+            if (prev && list.some(function (e) { return e.path === prev; })) return prev;
+            return (data && data.default_file) || (list[0] && list[0].path) || "";
+          });
+          return data;
+        })
+        .catch(function (e) {
+          setErr(String(e && e.message ? e.message : e));
+          setMeta(null);
+          setEntries([]);
+        })
+        .finally(function () { setLoading(false); });
+    }, [props.boardSlug]);
+
+    const loadFile = useCallback(function (relPath) {
+      if (!relPath) {
+        setFileData(null);
+        return Promise.resolve();
+      }
+      setFileLoading(true);
+      const qs = new URLSearchParams({ path: relPath });
+      return SDK.fetchJSON(withBoard(`${API}/docs/file?${qs}`, props.boardSlug))
+        .then(function (data) { setFileData(data); setErr(null); })
+        .catch(function (e) {
+          setFileData(null);
+          setErr(String(e && e.message ? e.message : e));
+        })
+        .finally(function () { setFileLoading(false); });
+    }, [props.boardSlug]);
+
+    useEffect(function () { loadTree(); }, [loadTree]);
+
+    useEffect(function () {
+      if (selectedPath) loadFile(selectedPath);
+    }, [selectedPath, loadFile]);
+
+    const renderMd = props.renderMarkdown !== false;
+    const sources = (fileData && fileData.sources) || [];
+
+    return h("div", { className: "hermes-kanban-docs" },
+      h("div", { className: "hermes-kanban-docs-head" },
+        h("div", { className: "hermes-kanban-docs-title" },
+          tx(t, "projectDocs", "Project documentation")),
+        meta && meta.docs_label
+          ? h("span", { className: "hermes-kanban-docs-sub" }, meta.docs_label)
+          : null,
+        h("div", { className: "flex-1" }),
+        h(Button, {
+          size: "sm",
+          variant: "ghost",
+          title: tx(t, "refreshDocs", "Reload documentation tree"),
+          onClick: function () { loadTree().then(function () { if (selectedPath) loadFile(selectedPath); }); },
+        }, tx(t, "refresh", "Refresh")),
+        h(Button, {
+          size: "sm",
+          variant: "ghost",
+          title: tx(t, "closeDocs", "Close documentation panel"),
+          onClick: props.onClose,
+        }, "×"),
+      ),
+      loading
+        ? h("div", { className: "hermes-kanban-docs-empty" },
+            tx(t, "loadingDocs", "Loading documentation…"))
+        : null,
+      err && !entries.length
+        ? h("div", { className: "hermes-kanban-docs-empty text-destructive" }, err)
+        : null,
+      meta && meta.message && !entries.length && !loading
+        ? h("div", { className: "hermes-kanban-docs-empty text-muted-foreground" },
+            meta.message,
+            meta.workdir
+              ? h("div", { className: "text-xs mt-2 font-mono break-all" }, meta.workdir)
+              : null)
+        : null,
+      entries.length > 0
+        ? h("div", { className: "hermes-kanban-docs-body" },
+            h("nav", { className: "hermes-kanban-docs-nav" },
+              entries.map(function (e) {
+                const active = e.path === selectedPath;
+                return h("button", {
+                  key: e.path,
+                  type: "button",
+                  className: cn(
+                    "hermes-kanban-docs-nav-item",
+                    active ? "hermes-kanban-docs-nav-item--active" : "",
+                  ),
+                  onClick: function () { setSelectedPath(e.path); },
+                  title: e.path,
+                }, e.title || e.path);
+              }),
+            ),
+            h("article", { className: "hermes-kanban-docs-article" },
+              fileLoading
+                ? h("div", { className: "text-xs text-muted-foreground" },
+                    tx(t, "loadingPage", "Loading page…"))
+                : null,
+              fileData
+                ? h("div", null,
+                    h("h3", { className: "hermes-kanban-docs-page-title" },
+                      fileData.title || fileData.path),
+                    sources.length > 0
+                      ? h("div", { className: "hermes-kanban-docs-sources" },
+                          h("div", { className: "text-xs text-muted-foreground mb-1" },
+                            tx(t, "docSources", "Changed by tasks:")),
+                          sources.map(function (s) {
+                            return h(Button, {
+                              key: s.task + s.action,
+                              size: "sm",
+                              variant: "outline",
+                              className: "h-7 text-xs mr-1 mb-1",
+                              onClick: function () {
+                                if (props.onOpenTask) props.onOpenTask(s.task);
+                              },
+                              title: tx(t, "openTask", "Open task in drawer"),
+                            }, `${s.task} (${s.action})`);
+                          }),
+                        )
+                      : null,
+                    h(MarkdownBlock, {
+                      source: fileData.body || fileData.content || "",
+                      enabled: renderMd,
+                    }),
+                  )
+                : h("div", { className: "text-xs text-muted-foreground" },
+                    tx(t, "pickDocPage", "Select a page from the list.")),
+            ),
+          )
+        : null,
+    );
+  }
+
+  // -------------------------------------------------------------------------
 
   function BoardToolbar(props) {
     const { t } = useI18n();
@@ -2012,6 +2177,13 @@
         tx(t, "lanesByProfile", "Lanes by profile"),
       ),
       h("div", { className: "flex-1" }),
+      h(Button, {
+        onClick: props.onToggleDocs,
+        size: "sm",
+        variant: props.docsOpen ? "default" : "outline",
+        title: tx(t, "toggleProjectDocs",
+          "Show project documentation from docs/wiki/ (board default_workdir)"),
+      }, tx(t, "projectDocs", "Docs")),
       h(Button, {
         onClick: props.onNudgeDispatch,
         size: "sm",

@@ -4,9 +4,11 @@
 > Hermes-Repo. Auf dem Pi z. B.:
 >
 > ```bash
-> mkdir -p /home/pi/projects/schlummerpost/docs/wiki
-> cp templates/kanban-wiki-project/AGENTS.md /home/pi/projects/schlummerpost/AGENTS.md
-> hermes kanban boards set-default-workdir schlummerpost /home/pi/projects/schlummerpost
+> PROJECT=/home/pi/projects/schlummerpost
+> mkdir -p "$PROJECT"
+> cp templates/kanban-wiki-project/AGENTS.md "$PROJECT/AGENTS.md"
+> cp -r templates/kanban-wiki-project/docs "$PROJECT/"
+> hermes kanban boards set-default-workdir schlummerpost "$PROJECT"
 > ```
 >
 > Passe Pfade und Board-Slug unten an, falls du andere Namen nutzt.
@@ -148,6 +150,15 @@ Der Orchestrator führt die Arbeit nicht selbst aus — er routet nur.
 │   └── decisions/            # optional: ADRs
 └── work/                     # Task-Artefakte, Drafts, Skripte
 ```
+
+---
+
+## Im Dashboard lesen
+
+Nach `hermes dashboard` → Tab **Kanban** → Toolbar **Docs**: zeigt
+`docs/wiki/` aus der Board-`default_workdir` (Markdown, inkl. Task-Links aus
+Frontmatter `sources`). Voraussetzung: `default_workdir` gesetzt und Wiki-Dateien
+angelegt.
 
 ---
 
