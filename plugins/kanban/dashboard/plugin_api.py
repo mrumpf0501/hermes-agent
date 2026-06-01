@@ -666,6 +666,29 @@ def _safe_attachment_name(raw: str) -> str:
     return name[:200]
 
 
+@router.get("/attachments/counts")
+def attachment_counts(board: Optional[str] = Query(None)):
+    """Per-task attachment totals for card badges.
+
+    Cheap aggregate over ``task_attachments`` so the dashboard can show
+    clip icons on the board without opening each task drawer. The board
+    payload also carries ``attachment_count``; this endpoint exists so
+    older gateways that predate that field still get correct badges.
+    """
+    board = _resolve_board(board)
+    conn = _conn(board=board)
+    try:
+        counts = {
+            r["task_id"]: int(r["n"])
+            for r in conn.execute(
+                "SELECT task_id, COUNT(*) AS n FROM task_attachments GROUP BY task_id"
+            )
+        }
+        return {"counts": counts}
+    finally:
+        conn.close()
+
+
 @router.get("/tasks/{task_id}/attachments")
 def list_task_attachments(task_id: str, board: Optional[str] = Query(None)):
     board = _resolve_board(board)

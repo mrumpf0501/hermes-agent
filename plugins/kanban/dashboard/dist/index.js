@@ -86,6 +86,28 @@
     return body || raw;
   }
 
+  function mergeBoardAttachmentCounts(boardData, counts) {
+    if (!boardData || !boardData.columns || !counts) return boardData;
+    return Object.assign({}, boardData, {
+      columns: boardData.columns.map(function (col) {
+        return Object.assign({}, col, {
+          tasks: (col.tasks || []).map(function (t) {
+            if (counts[t.id] == null) return t;
+            const n = Number(counts[t.id]) || 0;
+            if ((Number(t.attachment_count) || 0) === n) return t;
+            return Object.assign({}, t, { attachment_count: n });
+          }),
+        });
+      }),
+    });
+  }
+
+  function fetchAttachmentCounts(boardSlug) {
+    return SDK.fetchJSON(withBoard(`${API}/attachments/counts`, boardSlug))
+      .then(function (r) { return (r && r.counts) || {}; })
+      .catch(function () { return {}; });
+  }
+
   // Multipart upload for task attachments (same auth as TaskDrawer).
   function uploadTaskAttachments(taskId, boardSlug, fileList) {
     const files = Array.prototype.slice.call(fileList || []);
@@ -559,6 +581,11 @@
       if (includeArchived) qs.set("include_archived", "true");
       const url = qs.toString() ? `${API}/board?${qs}` : `${API}/board`;
       return SDK.fetchJSON(withBoard(url, board))
+        .then(function (data) {
+          return fetchAttachmentCounts(board).then(function (counts) {
+            return mergeBoardAttachmentCounts(data, counts);
+          });
+        })
         .then(function (data) {
           setBoardData(data);
           cursorRef.current = data.latest_event_id || 0;
