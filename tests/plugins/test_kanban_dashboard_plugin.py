@@ -2193,3 +2193,14 @@ def test_dashboard_failed_card_highlight_class_exists():
     assert "hermes-kanban-card--failed" in js
     assert "hermes-kanban-card--failed" in css
     assert "failedIds" in js
+
+
+def test_dashboard_inline_create_includes_tenant_field():
+    """Task create form must send tenant to POST /tasks (API already supports it)."""
+    repo_root = Path(__file__).resolve().parents[2]
+    js = (repo_root / "plugins" / "kanban" / "dashboard" / "dist" / "index.js").read_text()
+
+    assert "defaultCreateTenant" in js
+    assert "body.tenant = tenantTrim" in js
+    assert "tenantPlaceholder" in js
+    assert "defaultCreateTenant: (config && config.default_tenant)" in js

@@ -1035,6 +1035,7 @@
           onOpen: setSelectedTaskId,
           onCreate: createTask,
           allTasks: boardData.columns.reduce(function (acc, c) { return acc.concat(c.tasks); }, []),
+          defaultCreateTenant: (config && config.default_tenant) || "",
         }),
         selectedTaskId ? h(TaskDrawer, {
           taskId: selectedTaskId,
@@ -2245,6 +2246,7 @@
           onOpen: props.onOpen,
           onCreate: props.onCreate,
           allTasks: props.allTasks,
+          defaultCreateTenant: props.defaultCreateTenant,
         });
       }),
       h(TrashDropZone, {
@@ -2353,6 +2355,7 @@
       showCreate ? h(InlineCreate, {
         columnName: props.column.name,
         allTasks: props.allTasks,
+        defaultCreateTenant: props.defaultCreateTenant,
         onSubmit: function (body) {
           props.onCreate(body).then(function () { setShowCreate(false); });
         },
@@ -2594,6 +2597,7 @@
     const [priority, setPriority] = useState(0);
     const [parent, setParent] = useState("");
     const [skills, setSkills] = useState("");
+    const [tenant, setTenant] = useState(props.defaultCreateTenant || "");
     // Workspace controls. `scratch` (default) ignores path; `worktree` optionally
     // takes a path (dispatcher derives one from the assignee profile otherwise);
     // `dir` requires a path. Backend enforces the rule — we only hide/show the
@@ -2640,8 +2644,11 @@
         const gmt = parseInt(goalMaxTurns, 10);
         if (Number.isFinite(gmt) && gmt > 0) body.goal_max_turns = gmt;
       }
+      const tenantTrim = tenant.trim();
+      if (tenantTrim) body.tenant = tenantTrim;
       props.onSubmit(body);
       setTitle(""); setAssignee(""); setPriority(0); setParent(""); setSkills("");
+      setTenant(props.defaultCreateTenant || "");
       setWorkspaceKind("scratch"); setWorkspacePath("");
       setGoalMode(false); setGoalMaxTurns("");
     };
@@ -2699,6 +2706,17 @@
           "skills (optional, comma-separated): translation, github-code-review"),
         title: "Force-load these skills into the worker (in addition to the built-in kanban-worker).",
         className: "h-7 text-xs",
+      }),
+      h(Input, {
+        value: tenant,
+        onChange: function (e) { setTenant(e.target.value); },
+        placeholder: tx(t, "tenantPlaceholder", "tenant (optional)"),
+        title: "Namespace within this board (customer, project, team). Used for filtering and shown on the card.",
+        className: "h-7 text-xs",
+        style: { textTransform: "none" },
+        autoCapitalize: "none",
+        autoCorrect: "off",
+        spellCheck: false,
       }),
       h("div", { className: "flex gap-2 items-center" },
         h("label", {

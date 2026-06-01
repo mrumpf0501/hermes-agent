@@ -1,7 +1,7 @@
 {
   "name": "example",
   "label": "Example",
-  "description": "Example dashboard plugin — used by test suite for auth coverage",
+  "description": "Test-only dashboard plugin (auth coverage). Hidden from sidebar via dashboard.hidden_plugins.",
   "icon": "Sparkles",
   "version": "1.0.0",
   "tab": {
