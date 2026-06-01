@@ -6,8 +6,15 @@ description: >-
   to confirm pre-order, then logs in again to place the order and records the
   result on the Kanban task. Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.0
+version: 1.1.1
 platforms: [linux, macos, windows]
+required_environment_variables:
+  - name: SORGER_USER
+    prompt: Sorger Mittagessen login username
+    help: Stored in the assignee profile .env; never put in task text.
+  - name: SORGER_PASSWORD
+    prompt: Sorger Mittagessen login password
+    help: Stored in the assignee profile .env; never put in task text.
 metadata:
   hermes:
     category: productivity
@@ -47,9 +54,8 @@ available without extra config.
 
 - Credentials from the assignee profile's `~/.hermes/profiles/<name>/.env` and/or
   the host environment (e.g. systemd) — **not** in task title/body/comments.
-  `terminal.env_passthrough` is only needed if a worker reads them via
-  `terminal` / `execute_code` (see below); browser login does not require it
-  when vars are already in the worker process env.
+  This skill's `required_environment_variables` registers passthrough for
+  `terminal` / `execute_code` when you use the login steps below.
 - **Eligible dishes:** any option **without** excluded allergen codes (default **A**
   and **G**). If a line shows `(A)`, `A, G`, `Allergene: A G`, or legend markers
   **A** / **G** on that dish, **exclude** it and record why in `excluded_dishes`.
@@ -66,10 +72,81 @@ available without extra config.
 **Messaging** (gateway approval): `send_message` — enable on the worker profile
 when tasks may originate from Email, Telegram, Discord, Slack, etc.
 
-## Login and consent (unchanged essentials)
+## Browser session id
 
-1. Datenschutz checkbox ≠ login submit — accept privacy, then submit credentials.
-2. Submit order: button → `browser_press("Enter")` → `form.requestSubmit()` in
+Use the **same** `task_id` on every `browser_*` call — the Kanban task id from
+`$HERMES_KANBAN_TASK` (e.g. `t_a1b2c3`), not `"default"`:
+
+```
+browser_navigate(url="https://mittagessen.sorgerbrot.at", task_id="t_a1b2c3")
+browser_snapshot(task_id="t_a1b2c3")
+```
+
+If you omit `task_id`, login and later steps may hit different browser sessions.
+
+## Login credentials — do not use `$SORGER_*` in `browser_type`
+
+`browser_type(text=...)` sends **exactly** the string you pass. It does **not**
+run a shell — `text="$SORGER_USER"` types the eleven characters
+`$`, `S`, `O`, `R`, `G`, `E`, `R`, `_`, `U`, `S`, `E`, `R` into the form. That
+is a common failure mode.
+
+**Never:**
+
+```
+browser_type(ref="@e2", text="$SORGER_USER")
+browser_type(ref="@e3", text="$SORGER_PASSWORD")
+```
+
+### Recommended: read env, then `browser_type` real values
+
+After `browser_snapshot` gives refs for username and password fields:
+
+1. Read credentials (values must appear in tool output — do not paste them into
+   comments or task text):
+
+```
+terminal(command='printf "%s" "${SORGER_USER}"')
+terminal(command='printf "%s" "${SORGER_PASSWORD}"')
+```
+
+2. Use the **returned strings** (not `$SORGER_…`) in separate `browser_type` calls:
+
+```
+browser_type(ref="@e2", text="<actual username from step 1>")
+browser_type(ref="@e3", text="<actual password from step 2>", task_id="t_a1b2c3")
+```
+
+If `SORGER_PASSWORD` is empty in terminal output, the variable is missing in the
+worker environment or was stripped — fix profile `.env` / gateway env; loading
+this skill should register passthrough for `SORGER_PASSWORD`.
+
+### Alternative: `browser_console` fill (same snapshot refs)
+
+After you have the real username and password strings (via `terminal` above),
+set fields in the page without re-typing through `browser_type`:
+
+```javascript
+(() => {
+  const u = document.querySelector('input[type="text"], input:not([type="password"])');
+  const p = document.querySelector('input[type="password"]');
+  if (!u || !p) return "fields not found";
+  u.value = "<actual username>";
+  p.value = "<actual password>";
+  u.dispatchEvent(new Event("input", { bubbles: true }));
+  p.dispatchEvent(new Event("input", { bubbles: true }));
+  return "filled";
+})()
+```
+
+Replace the placeholders with the real values from `printenv` / `printf` — not
+`$SORGER_USER`.
+
+## Login and consent
+
+1. Datenschutz checkbox ≠ login submit — accept privacy, then fill credentials
+   (above), then submit.
+2. Submit login: button → `browser_press("Enter")` → `form.requestSubmit()` in
    `browser_console`.
 3. After every step: `browser_snapshot()`; do not claim login or order success if
    the page unchanged.
@@ -296,6 +373,7 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 - Selecting a dish before choosing the date on the Speisen-auswählen page
 - Offering dishes with **A** or **G** allergens
 - `kanban_complete` after scout without user choice (unless `auto_order` / `wahl`)
+- `browser_type` with `$SORGER_USER` / `$SORGER_PASSWORD` (shell syntax is not expanded)
 - Credentials or passwords in comments
 - Assuming gateway users saw options without `send_message` or a clear comment list
 - Wrong Kanban board (`schlummerpost`)
@@ -312,7 +390,8 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | Blocked but user answered | Orchestrator/user: `/kanban comment t_… "2"` then `/kanban unblock t_…` |
 | Same page after login | Re-snapshot; Enter / `requestSubmit` |
 | `send_message` fails | `action=list`; use `Notify:` from body; rely on block notifier + comment |
-| `SORGER_*` empty in `terminal` | Vars may exist in the worker process but be stripped in sandbox — add `terminal.env_passthrough` or skill `required_environment_variables` |
+| Login fields show `$SORGER_USER` | Used `browser_type` with shell syntax — use `terminal` + real strings (see above) |
+| `SORGER_*` empty in `terminal` | Set in profile `.env` or gateway env; ensure skill is loaded (registers passthrough) |
 
 ---
 
