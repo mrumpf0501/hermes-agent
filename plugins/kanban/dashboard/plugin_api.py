@@ -2401,6 +2401,21 @@ class CreateDocBody(BaseModel):
     content: str = ""
 
 
+class DeleteDocBody(BaseModel):
+    path: str
+
+
+def _delete_doc_file(board: Optional[str], rel_path: str) -> dict[str, Any]:
+    """Shared delete logic for DELETE and POST delete endpoints."""
+    _workdir, docs_root, _label = _require_docs_root(board)
+    rel, target = _resolve_doc_target(docs_root, rel_path, must_exist=True)
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not delete file: {exc}") from exc
+    return {"ok": True, "path": rel}
+
+
 @router.put("/docs/file")
 def update_project_doc(
     payload: UpdateDocBody,
@@ -2442,19 +2457,22 @@ def create_project_doc(payload: CreateDocBody, board: Optional[str] = Query(None
     }
 
 
+@router.post("/docs/file/delete")
+def delete_project_doc_post(
+    payload: DeleteDocBody,
+    board: Optional[str] = Query(None),
+):
+    """Delete a markdown page (POST fallback for hosts that block HTTP DELETE)."""
+    return _delete_doc_file(board, payload.path)
+
+
 @router.delete("/docs/file")
 def delete_project_doc(
     path: str = Query(..., description="Path relative to the docs root"),
     board: Optional[str] = Query(None),
 ):
     """Delete a markdown page from the documentation tree."""
-    _workdir, docs_root, _label = _require_docs_root(board)
-    rel, target = _resolve_doc_target(docs_root, path, must_exist=True)
-    try:
-        target.unlink()
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"could not delete file: {exc}") from exc
-    return {"ok": True, "path": rel}
+    return _delete_doc_file(board, path)
 
 
 # ---------------------------------------------------------------------------

@@ -2171,9 +2171,10 @@
       if (!window.confirm(msg)) return;
       setSaving(true);
       setErr(null);
-      const qs = new URLSearchParams({ path: selectedPath });
-      SDK.fetchJSON(withBoard(`${API}/docs/file?${qs}`, props.boardSlug), {
-        method: "DELETE",
+      SDK.fetchJSON(withBoard(`${API}/docs/file/delete`, props.boardSlug), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: selectedPath }),
       })
         .then(function () {
           setEditing(false);
