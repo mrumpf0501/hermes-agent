@@ -41,7 +41,15 @@ the Schlummerpost board for Sorger work.
 | `SORGER_BASE_URL` | Optional; default `https://mittagessen.sorgerbrot.at` |
 | `SORGER_EXCLUDE_ALLERGENS` | Optional; default `A,G` — comma-separated codes to **reject** |
 
-- Credentials only from `.env` (`env_passthrough`); never in task title/body/comments.
+Kanban workers inherit the dispatcher/gateway environment and load the profile
+`.env` on startup — if `SORGER_*` is set there or in the parent process, it is
+available without extra config.
+
+- Credentials from the assignee profile's `~/.hermes/profiles/<name>/.env` and/or
+  the host environment (e.g. systemd) — **not** in task title/body/comments.
+  `terminal.env_passthrough` is only needed if a worker reads them via
+  `terminal` / `execute_code` (see below); browser login does not require it
+  when vars are already in the worker process env.
 - **Eligible dishes:** any option **without** excluded allergen codes (default **A**
   and **G**). If a line shows `(A)`, `A, G`, `Allergene: A G`, or legend markers
   **A** / **G** on that dish, **exclude** it and record why in `excluded_dishes`.
@@ -304,6 +312,7 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | Blocked but user answered | Orchestrator/user: `/kanban comment t_… "2"` then `/kanban unblock t_…` |
 | Same page after login | Re-snapshot; Enter / `requestSubmit` |
 | `send_message` fails | `action=list`; use `Notify:` from body; rely on block notifier + comment |
+| `SORGER_*` empty in `terminal` | Vars may exist in the worker process but be stripped in sandbox — add `terminal.env_passthrough` or skill `required_environment_variables` |
 
 ---
 
