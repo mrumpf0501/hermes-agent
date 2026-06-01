@@ -6,7 +6,7 @@ description: >-
   to confirm pre-order, then logs in again to place the order and records the
   result on the Kanban task. Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.1
+version: 1.1.2
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -56,10 +56,46 @@ available without extra config.
   the host environment (e.g. systemd) — **not** in task title/body/comments.
   This skill's `required_environment_variables` registers passthrough for
   `terminal` / `execute_code` when you use the login steps below.
-- **Eligible dishes:** any option **without** excluded allergen codes (default **A**
-  and **G**). If a line shows `(A)`, `A, G`, `Allergene: A G`, or legend markers
-  **A** / **G** on that dish, **exclude** it and record why in `excluded_dishes`.
-- When in doubt, exclude and list the dish under excluded rather than offering it.
+### Two buckets (do not invert)
+
+| JSON field | Meaning | Offer to user? |
+|------------|---------|----------------|
+| **`eligible_dishes`** | Dish has **no A and no G** (may have other codes like O, M, B) | **Yes** — numbered options for Vorbestellung |
+| **`excluded_dishes`** | Dish contains **A and/or G** | **No** — never list in the numbered offer |
+
+Default policy `SORGER_EXCLUDE_ALLERGENS=A,G` means: user avoids **gluten (A)** and **… (G per site legend)** only.
+**All other allergen letters stay orderable** and belong in `eligible_dishes` with their full code list.
+
+### Classification rule
+
+For each dish on the menu for the chosen date:
+
+1. Collect **every** allergen letter/code shown for that dish (snapshot or vision).
+2. Let `blocked = {A, G}` ∩ codes on dish (case-sensitive single letters as on the site).
+3. If `blocked` is non-empty → **`excluded_dishes`**, `reason`: `"contains A"`, `"contains G"`, or `"contains A and G"`.
+4. If `blocked` is empty → **`eligible_dishes`** — even when codes are `["O"]`, `["M"]`, `["B"]`, or `[]`.
+5. **Never** put a dish in `excluded_dishes` because of O, M, L, N, etc. alone.
+6. **Never** put a dish in `eligible_dishes` if the site shows **A** or **G** on that dish.
+
+Wrong (inverts policy — do not do this):
+
+```json
+"excluded_dishes": [{"name": "Chili con Carne", "allergens": ["O"], "reason": "contains O"}]
+```
+
+Correct:
+
+```json
+"eligible_dishes": [{"option": 3, "name": "Chili con Carne", "allergens": ["O"]}],
+"excluded_dishes": [{"name": "Semmelknödel", "allergens": ["A", "G"], "reason": "contains A and G"}]
+```
+
+### Before `kanban_comment` (self-check)
+
+- Every `excluded_dishes[].allergens` must include **A or G**. If not → move dish to `eligible_dishes`.
+- Every `eligible_dishes` entry must **not** include A or G in `allergens`.
+- `reason` in `excluded_dishes` must mention **A or G**, never only O/M/other.
+- If unsure whether a marker is A vs another letter, `browser_snapshot(full=true)` or `browser_vision` — do not guess by excluding everything with any letter.
 
 ## Required tools
 
@@ -168,8 +204,11 @@ On **this** screen (not before):
      shows Mon–Fri).
 2. `browser_snapshot()` — confirm the visible menu matches the chosen date
    (heading, day label, or URL change).
-3. Parse **all dishes** shown for that date; split into `eligible_dishes` and
-   `excluded_dishes` per allergen rules above.
+3. Parse **all dishes** for that date; classify per **Two buckets** above.
+
+**Wrong page:** heading **„Meine Bestellungen“** is order history, not the daily menu.
+Navigate back until you see **„Bitte wählen Sie die Speisen aus, die Sie gerne hätten.“**
+before building `sorger-menu`. Do not scout from the Bestellungen list.
 
 If the date control is not in the snapshot, try `browser_snapshot(full=true)` or
 `browser_vision`, then click the correct day ref and snapshot again.
@@ -211,11 +250,11 @@ payload = {
     "date_label": "Di 03.06.2026",
     "page_heading": "Bitte wählen Sie die Speisen aus, die Sie gerne hätten.",
     "eligible_dishes": [
-        {"option": 1, "name": "…", "allergens": []},
-        {"option": 2, "name": "…", "allergens": ["B"]},
+        {"option": 1, "name": "Chili con Carne", "allergens": ["O"]},
+        {"option": 2, "name": "Kunterbunter Salat", "allergens": []},
     ],
     "excluded_dishes": [
-        {"name": "…", "allergens": ["A", "G"], "reason": "contains A or G"},
+        {"name": "Weizennudeln mit Sauce", "allergens": ["A", "G"], "reason": "contains A and G"},
     ],
     "allergen_policy": {"exclude": ["A", "G"]},
 }
@@ -230,7 +269,7 @@ Human-readable summary in a second comment (German, for humans and gateway):
 ```text
 Sorger Mittagessen — Vorbestellung für Di 03.06.2026?
 
-Ohne Allergene A/G:
+Bestellbar (ohne A und G — andere Allergene ggf. im Kommentar):
 1) …
 2) …
 
@@ -273,9 +312,9 @@ block with the same `awaiting-user` prefix unless the task body says
 
 ### 3. If no eligible dishes
 
-Comment why (all dishes have A/G, date closed, deadline passed). Block with a clear
-reason; on gateway, `send_message` that no safe option exists — do not offer a fake
-choice.
+Comment why (**every** dish on the menu shows A or G, date closed, deadline passed).
+Block with a clear reason; on gateway, `send_message` that no A/G-free option exists.
+Dishes with only O/M/other allergens still count as eligible — that is not “no options”.
 
 ---
 
@@ -371,7 +410,9 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 ## Anti-patterns
 
 - Selecting a dish before choosing the date on the Speisen-auswählen page
-- Offering dishes with **A** or **G** allergens
+- Putting dishes with **only** O/M/other codes in `excluded_dishes` (only **A/G** go there)
+- Putting dishes with **A** or **G** in `eligible_dishes`
+- Scouting from **„Meine Bestellungen“** instead of the Speisen-auswählen page
 - `kanban_complete` after scout without user choice (unless `auto_order` / `wahl`)
 - `browser_type` with `$SORGER_USER` / `$SORGER_PASSWORD` (shell syntax is not expanded)
 - Credentials or passwords in comments
@@ -392,6 +433,7 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | `send_message` fails | `action=list`; use `Notify:` from body; rely on block notifier + comment |
 | Login fields show `$SORGER_USER` | Used `browser_type` with shell syntax — use `terminal` + real strings (see above) |
 | `SORGER_*` empty in `terminal` | Set in profile `.env` or gateway env; ensure skill is loaded (registers passthrough) |
+| `excluded` lists O/M only; `eligible` all `[]` | Inverted or wrong page — re-read rules; use Speisen page; O/M → eligible |
 
 ---
 
