@@ -6,7 +6,7 @@ description: >-
   to confirm pre-order, then logs in again to place the order and records the
   result on the Kanban task. Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.2
+version: 1.1.5
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -56,6 +56,7 @@ available without extra config.
   the host environment (e.g. systemd) — **not** in task title/body/comments.
   This skill's `required_environment_variables` registers passthrough for
   `terminal` / `execute_code` when you use the login steps below.
+
 ### Two buckets (do not invert)
 
 | JSON field | Meaning | Offer to user? |
@@ -66,16 +67,56 @@ available without extra config.
 Default policy `SORGER_EXCLUDE_ALLERGENS=A,G` means: user avoids **gluten (A)** and **… (G per site legend)** only.
 **All other allergen letters stay orderable** and belong in `eligible_dishes` with their full code list.
 
+### How Sorger shows allergens (per dish card)
+
+Each dish is a **card** on the Speisen page, not a single line of text. Under the
+price you must find:
+
+```text
+Allergene:  [A] [C]     ← round badges / letters after the label
+```
+
+Reference cards (**must be excluded** — never under „Bestellbar“ / numbered options):
+
+| Dish | Line on card | `allergens` | Bucket | Policy hit |
+|------|----------------|-------------|--------|------------|
+| Salat Hendl | `Allergene: A C` | `["A", "C"]` | **`excluded_dishes`** | **A** |
+| Brokkolicremesuppe | `Allergene: G O` | `["G", "O"]` | **`excluded_dishes`** | **G** |
+
+If **Salat Hendl** or **Brokkolicremesuppe** (or any dish whose card shows **A** or
+**G** badges) appears in `eligible_dishes` or in the numbered human comment, the
+scout output is **wrong** — fix before `kanban_block`.
+
+**G is a blocked code**, not “ignored because the dish name contains Brokkoli”.
+The badge letter **G** on `Allergene:` is what matters.
+
+Common failure: reading only the **dish title** (`Salat Hendl`, `Brokkolicremesuppe`) from the snapshot
+and setting `allergens: []` because the **Allergene:** row is on the next line or
+omitted in `full=false` snapshots. That wrongly offers A-containing dishes.
+
+**Per dish, always:**
+
+1. Locate the card for that exact dish name.
+2. Read the **`Allergene:`** line on **that same card** (badges or plain letters).
+3. Parse every letter `A`–`Z` after `Allergene:` (e.g. `A C` → `["A","C"]`,
+   `A,G` → `["A","G"]`). Sort letters for stable JSON.
+4. If the snapshot omits badges, use `browser_snapshot(full=true)` on that card
+   or `browser_vision` with: “List dish name and all allergen letters on its card.”
+
+Do **not** infer “no allergens” from missing data — re-snapshot first.
+
 ### Classification rule
 
 For each dish on the menu for the chosen date:
 
-1. Collect **every** allergen letter/code shown for that dish (snapshot or vision).
-2. Let `blocked = {A, G}` ∩ codes on dish (case-sensitive single letters as on the site).
-3. If `blocked` is non-empty → **`excluded_dishes`**, `reason`: `"contains A"`, `"contains G"`, or `"contains A and G"`.
-4. If `blocked` is empty → **`eligible_dishes`** — even when codes are `["O"]`, `["M"]`, `["B"]`, or `[]`.
-5. **Never** put a dish in `excluded_dishes` because of O, M, L, N, etc. alone.
-6. **Never** put a dish in `eligible_dishes` if the site shows **A** or **G** on that dish.
+1. `codes` = all letters from that dish’s **`Allergene:`** line (step 1–3 above).
+2. `blocked = {A, G} ∩ codes` (policy letters from `SORGER_EXCLUDE_ALLERGENS`).
+3. If `blocked` is non-empty → **`excluded_dishes`**, `reason`: `"contains A"`,
+   `"contains G"`, or `"contains A and G"`.
+4. If `blocked` is empty → **`eligible_dishes`** — even when `codes` is
+   `["O"]`, `["M"]`, `["C"]`, or `[]`.
+5. **Never** exclude only for O, M, C, etc. **Never** offer a dish whose `codes`
+   includes **A** or **G**.
 
 Wrong (inverts policy — do not do this):
 
@@ -92,10 +133,15 @@ Correct:
 
 ### Before `kanban_comment` (self-check)
 
-- Every `excluded_dishes[].allergens` must include **A or G**. If not → move dish to `eligible_dishes`.
-- Every `eligible_dishes` entry must **not** include A or G in `allergens`.
-- `reason` in `excluded_dishes` must mention **A or G**, never only O/M/other.
-- If unsure whether a marker is A vs another letter, `browser_snapshot(full=true)` or `browser_vision` — do not guess by excluding everything with any letter.
+- Re-scan every **`eligible_dishes`** row: if the card shows badge **A** or **G**
+  → move to `excluded_dishes` (e.g. **Salat Hendl** + A; **Brokkolicremesuppe** + G).
+- Grep the numbered human comment for known bad names (**Salat Hendl**,
+  **Brokkolicremesuppe**) or for `— Allergene: …` lines that include **A** or **G**.
+- Every `excluded_dishes[].allergens` must include **A or G**. If not → move to `eligible_dishes`.
+- Every `eligible_dishes[].allergens` must **not** contain `"A"` or `"G"`.
+- `reason` in `excluded_dishes` must mention **A or G**, never only O/M/C/other.
+- If any eligible row has `allergens: []` but you never saw `Allergene:` for that
+  card, do **not** publish — snapshot/vision again.
 
 ## Required tools
 
@@ -254,6 +300,8 @@ payload = {
         {"option": 2, "name": "Kunterbunter Salat", "allergens": []},
     ],
     "excluded_dishes": [
+        {"name": "Salat Hendl", "allergens": ["A", "C"], "reason": "contains A"},
+        {"name": "Brokkolicremesuppe", "allergens": ["G", "O"], "reason": "contains G"},
         {"name": "Weizennudeln mit Sauce", "allergens": ["A", "G"], "reason": "contains A and G"},
     ],
     "allergen_policy": {"exclude": ["A", "G"]},
@@ -264,18 +312,35 @@ kanban_comment(body="sorger-menu:\n" + json.dumps(payload, ensure_ascii=False, i
 Also set the same object under `metadata.sorger` in the **next** `kanban_complete`
 or store it in a comment only until complete — on scout you **block**, not complete.
 
-Human-readable summary in a second comment (German, for humans and gateway):
+Human-readable summary in a **second** `kanban_comment` (German). **Required:**
+show **allergens next to every dish** in both sections — do not omit codes.
 
 ```text
 Sorger Mittagessen — Vorbestellung für Di 03.06.2026?
 
-Bestellbar (ohne A und G — andere Allergene ggf. im Kommentar):
-1) …
-2) …
+Bestellbar (ohne A und G):
+1) Kunterbunter Salat — Allergene: keine
+2) Chili con Carne — Allergene: O
+
+Nicht angeboten (enthält A oder G):
+- Salat Hendl — Allergene: A, C (ausgeschlossen: A)
+- Brokkolicremesuppe — Allergene: G, O (ausgeschlossen: G)
+- Weizennudeln — Allergene: A, G (ausgeschlossen: A, G)
 
 Antwort mit Nummer (z. B. 1), „ja 2“, oder exaktem Gerichtename.
 Oder: „nein“ / „keine Vorbestellung“.
 ```
+
+Format rules for the human comment:
+
+- **Eligible line:** `{n}) {name} — Allergene: {comma-separated codes}` or
+  `Allergene: keine` when the card has no `Allergene:` line.
+- **Excluded block:** bullet list with full codes from the card + `(ausgeschlossen: A)` /
+  `(ausgeschlossen: G)` / `(ausgeschlossen: A, G)` matching policy hits.
+- **Never** list an excluded dish (A or G present) under the numbered “Bestellbar” list.
+- Mirror the same allergen strings as in JSON `allergens` arrays.
+
+Use the same allergen lines in `send_message` when asking on gateway.
 
 ### 2. Gateway origin — ask the user
 
@@ -345,9 +410,47 @@ kanban_comment(body='sorger-choice: {"option": 2, "name": "…"}')
 1. `browser_navigate` → Datenschutz → Login (submit rules above).
 2. Open **„Bitte wählen Sie die Speisen aus, die Sie gerne hätten.“**
 3. Select the **same date** as Phase A (`date_iso` / `date_label` from comments).
-4. Select the chosen dish (checkbox, radio, or row click per snapshot).
-5. Submit/confirm the order (site-specific **Bestellen**, **Speichern**, **Weiter**).
+4. On the **chosen dish’s card/row**, set quantity **1** (see below) — do not stop
+   at clicking the dish name alone.
+5. **Submit the order form** for the whole page (see below) — not only the quantity row.
 6. `browser_snapshot()` — verify confirmation text or “bestellt” / order summary.
+
+#### Quantity: `1` in the field between `−` and `+`
+
+Each dish row/card has a quantity control on the right:
+
+```text
+[ − ]   0   [ + ]
+        ↑
+   number field (often shows 0 before ordering)
+```
+
+For the **user-selected dish only**:
+
+1. `browser_snapshot()` — find the **quantity input** on **that dish’s row** (between
+   the minus and plus buttons). It may be a `spinbutton`, `textbox`, or numeric input.
+2. Set the value to **`1`**:
+   - Prefer `browser_type(ref="@e…", text="1")` on that field (clears/replaces like fill), or
+   - `browser_click` the field, then `browser_type` `1`, or
+   - One `browser_click` on **`+`** only if the snapshot proves `0` → `1` and the
+     field is not directly typable.
+3. `browser_snapshot()` — confirm **that row** shows **`1`**, not `0`. Other dishes
+   may stay at `0`.
+
+Do **not** `kanban_complete` if the chosen row still shows `0`.
+
+#### Submit the order form
+
+After quantity is **1** for the chosen dish:
+
+1. `browser_snapshot()` — locate the page’s **order submit** control (e.g.
+   **Bestellen**, **Vorbestellen**, **Speichern**, **Weiter**, or a form submit button).
+2. Submit using the same rules as login:
+   - **A.** `browser_click` on the submit button ref
+   - **B.** `browser_press(key="Enter")` if focus is in the form
+   - **C.** `browser_console` → `form.requestSubmit()` if A/B fail
+3. `browser_snapshot()` — page must change (confirmation, “Meine Bestellungen”, or
+   success message). Unchanged page = order **not** done; retry or `kanban_block`.
 
 ### 3. Save and confirm on the ticket
 
@@ -359,7 +462,7 @@ kanban_complete(
         "sorger": {
             "date_iso": "2026-06-03",
             "ordered": True,
-            "dish": {"option": 2, "name": "…"},
+            "dish": {"option": 2, "name": "…", "allergens": ["O"]},
             "allergen_policy": {"exclude": ["A", "G"]},
             "verification": "confirmation snapshot: …",
         },
@@ -367,12 +470,16 @@ kanban_complete(
 )
 ```
 
-Add a final `kanban_comment` with the same facts in plain German for humans.
+Add a final `kanban_comment` with allergens on the ordered dish, e.g.:
+
+```text
+✓ Vorbestellt: Chili con Carne — Allergene: O — am Di 03.06.2026
+```
 
 On **gateway**, send confirmation:
 
 ```text
-✓ Sorger vorbestellt: <Gericht> am <Datum>. (Task t_…)
+✓ Sorger vorbestellt: Chili con Carne — Allergene: O — am Di 03.06.2026 (Task t_…)
 ```
 
 Use `send_message` to the same target as Phase A. Subscribers also receive the
@@ -410,8 +517,14 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 ## Anti-patterns
 
 - Selecting a dish before choosing the date on the Speisen-auswählen page
+- Clicking only the dish title without setting quantity **`1`** between `−` and `+`
+- Leaving quantity at **`0`** and submitting the form
+- Submitting before the chosen row shows **`1`**
 - Putting dishes with **only** O/M/other codes in `excluded_dishes` (only **A/G** go there)
-- Putting dishes with **A** or **G** in `eligible_dishes`
+- Putting dishes with **A** or **G** in `eligible_dishes` (e.g. **Salat Hendl** `A C`, **Brokkolicremesuppe** `G O`)
+- Treating **G** badge as safe because only **A** was remembered
+- `allergens: []` without reading the **`Allergene:`** row on that dish card
+- Human comment without `— Allergene: …` beside each dish name
 - Scouting from **„Meine Bestellungen“** instead of the Speisen-auswählen page
 - `kanban_complete` after scout without user choice (unless `auto_order` / `wahl`)
 - `browser_type` with `$SORGER_USER` / `$SORGER_PASSWORD` (shell syntax is not expanded)
@@ -434,6 +547,8 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | Login fields show `$SORGER_USER` | Used `browser_type` with shell syntax — use `terminal` + real strings (see above) |
 | `SORGER_*` empty in `terminal` | Set in profile `.env` or gateway env; ensure skill is loaded (registers passthrough) |
 | `excluded` lists O/M only; `eligible` all `[]` | Inverted or wrong page — re-read rules; use Speisen page; O/M → eligible |
+| A/G dishes still in numbered list | Re-read `Allergene:` per card; Salat Hendl (A), Brokkolicremesuppe (G) → excluded; fix comment |
+| Order “done” but row still `0` | Set quantity field to `1` on chosen row, then submit form again |
 
 ---
 
