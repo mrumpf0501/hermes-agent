@@ -148,6 +148,63 @@ def test_decompose_rejects_cyclic_parents(kanban_home):
             )
 
 
+def test_decompose_children_inherit_board_default_workdir(kanban_home, monkeypatch):
+    """Decomposed children use resolve_new_task_workspace, not hardcoded scratch."""
+    default_wd = "/home/pi/projects/schlummerpost"
+    kb.create_board("wiki-board", default_workdir=default_wd)
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "wiki-board")
+
+    with kb.connect(board="wiki-board") as conn:
+        tid = _create_triage(conn, title="content pipeline")
+        child_ids = kb.decompose_triage_task(
+            conn,
+            tid,
+            root_assignee="orchestrator",
+            children=[
+                {"title": "write guidelines", "assignee": "cmo", "parents": []},
+                {"title": "draft posts", "assignee": "cmo", "parents": [0]},
+            ],
+            author="decomposer",
+            board="wiki-board",
+        )
+    assert child_ids is not None
+    assert len(child_ids) == 2
+
+    with kb.connect(board="wiki-board") as conn:
+        for cid in child_ids:
+            t = kb.get_task(conn, cid)
+            assert t.workspace_kind == "dir"
+            assert t.workspace_path == default_wd
+
+
+def test_decompose_explicit_scratch_ignores_board_default(kanban_home, monkeypatch):
+    """Per-child workspace_kind=scratch stays ephemeral despite board default."""
+    default_wd = "/home/pi/projects/schlummerpost"
+    kb.create_board("wiki-board", default_workdir=default_wd)
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "wiki-board")
+
+    with kb.connect(board="wiki-board") as conn:
+        tid = _create_triage(conn)
+        child_ids = kb.decompose_triage_task(
+            conn,
+            tid,
+            root_assignee="orch",
+            children=[
+                {
+                    "title": "throwaway probe",
+                    "workspace_kind": "scratch",
+                    "parents": [],
+                },
+            ],
+            board="wiki-board",
+        )
+    assert child_ids is not None
+    with kb.connect(board="wiki-board") as conn:
+        t = kb.get_task(conn, child_ids[0])
+    assert t.workspace_kind == "scratch"
+    assert t.workspace_path is None
+
+
 def test_decompose_records_audit_comment_and_event(kanban_home):
     with kb.connect() as conn:
         tid = _create_triage(conn)

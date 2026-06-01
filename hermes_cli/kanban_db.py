@@ -4293,6 +4293,7 @@ def decompose_triage_task(
     children: list[dict],
     author: Optional[str] = None,
     auto_promote: bool = True,
+    board: Optional[str] = None,
 ) -> Optional[list[str]]:
     """Fan a triage task out into child tasks and promote the root to ``todo``.
 
@@ -4301,6 +4302,11 @@ def decompose_triage_task(
     its assignee (typically the orchestrator profile) wakes back up to
     judge completion or spawn more work.
 
+    Child workspaces resolve via :func:`resolve_new_task_workspace` (same
+    rules as :func:`create_task`): when ``workspace_kind`` is omitted on a
+    child, the board's ``default_workdir`` becomes a ``dir`` workspace;
+    explicit ``scratch`` stays ephemeral.
+
     ``children`` is a list of dicts, each shaped like::
 
         {
@@ -4308,6 +4314,8 @@ def decompose_triage_task(
             "body": "...",                     # optional
             "assignee": "profile-name",        # optional, None -> default fallback
             "parents": [0, 2],                 # indices into this same children list
+            "workspace_kind": "dir",           # optional; omit to inherit board default
+            "workspace_path": "/path/to/proj", # optional
         }
 
     Returns the list of created child task ids (in input order) on
@@ -4375,6 +4383,9 @@ def decompose_triage_task(
     # write_txn pitfalls. Instead we inline the INSERTs and
     # _append_event calls.
     now = int(time.time())
+    board_slug = (
+        _normalize_board_slug(board) if board else get_current_board()
+    )
     child_ids: list[str] = []
     with write_txn(conn):
         root_row = conn.execute(
@@ -4395,16 +4406,30 @@ def decompose_triage_task(
             title = child["title"].strip()
             body = child.get("body")
             assignee = _canonical_assignee(child.get("assignee"))
+            raw_wk = child.get("workspace_kind")
+            raw_wp = child.get("workspace_path")
+            workspace_kind, workspace_path = resolve_new_task_workspace(
+                raw_wk if isinstance(raw_wk, str) else None,
+                raw_wp if isinstance(raw_wp, str) else None,
+                board=board_slug,
+            )
+            if workspace_kind not in VALID_WORKSPACE_KINDS:
+                raise ValueError(
+                    f"child[{idx}].workspace_kind must be one of "
+                    f"{sorted(VALID_WORKSPACE_KINDS)}, got {workspace_kind!r}"
+                )
             conn.execute(
                 "INSERT INTO tasks "
                 "(id, title, body, assignee, status, workspace_kind, "
-                " tenant, created_at, created_by) "
-                "VALUES (?, ?, ?, ?, 'todo', 'scratch', ?, ?, ?)",
+                " workspace_path, tenant, created_at, created_by) "
+                "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?)",
                 (
                     new_id,
                     title,
                     body if isinstance(body, str) else None,
                     assignee,
+                    workspace_kind,
+                    workspace_path,
                     tenant,
                     now,
                     (author or "decomposer"),
