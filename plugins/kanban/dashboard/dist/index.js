@@ -570,6 +570,24 @@
         .finally(function () { setLoading(false); });
     }, [tenantFilter, includeArchived, board]);
 
+    // Keep card badges in sync when the drawer loads/uploads attachments
+    // (board list already carries attachment_count from GET /board).
+    const patchTaskOnBoard = useCallback(function (taskId, fields) {
+      setBoardData(function (b) {
+        if (!b || !b.columns) return b;
+        return Object.assign({}, b, {
+          columns: b.columns.map(function (col) {
+            return Object.assign({}, col, {
+              tasks: col.tasks.map(function (t) {
+                if (t.id !== taskId) return t;
+                return Object.assign({}, t, fields);
+              }),
+            });
+          }),
+        });
+      });
+    }, []);
+
     // --- load list of boards for the switcher ------------------------------
     const loadBoardList = useCallback(function () {
       return SDK.fetchJSON(withBoard(`${API}/boards`, board))
@@ -1107,6 +1125,7 @@
           boardSlug: board,
           onClose: function () { setSelectedTaskId(null); },
           onRefresh: loadBoard,
+          onPatchCard: patchTaskOnBoard,
           renderMarkdown: renderMd,
           allTasks: boardData.columns.reduce(function (acc, c) { return acc.concat(c.tasks); }, []),
           assignees: (boardData && boardData.assignees) || [],
@@ -2801,8 +2820,8 @@
               ? h("span", { className: "hermes-kanban-count",
                             title: `${t.comment_count} comment${t.comment_count === 1 ? "" : "s"} on this task` }, "💬 ", t.comment_count)
               : null,
-            t.attachment_count > 0
-              ? h("span", { className: "hermes-kanban-count",
+            (Number(t.attachment_count) || 0) > 0
+              ? h("span", { className: "hermes-kanban-count hermes-kanban-attachment-count",
                             title: `${t.attachment_count} attachment${t.attachment_count === 1 ? "" : "s"} on this task` }, "📎 ", t.attachment_count)
               : null,
             t.link_counts && (t.link_counts.parents + t.link_counts.children) > 0
@@ -3135,12 +3154,23 @@
     const [homeBusy, setHomeBusy] = useState({});
     const boardSlug = props.boardSlug;
 
+    const syncCardAttachmentCount = function (detail) {
+      if (!props.onPatchCard || !detail) return;
+      const n = (detail.attachments || []).length;
+      props.onPatchCard(props.taskId, { attachment_count: n });
+    };
+
     const load = useCallback(function () {
       return SDK.fetchJSON(withBoard(`${API}/tasks/${encodeURIComponent(props.taskId)}`, boardSlug))
-        .then(function (d) { setData(d); setErr(null); setPatchErr(null); })
+        .then(function (d) {
+          setData(d);
+          setErr(null);
+          setPatchErr(null);
+          syncCardAttachmentCount(d);
+        })
         .catch(function (e) { setErr(String(e.message || e)); })
         .finally(function () { setLoading(false); });
-    }, [props.taskId, boardSlug]);
+    }, [props.taskId, boardSlug, props.onPatchCard]);
 
     const loadHomeChannels = useCallback(function () {
       const qs = new URLSearchParams({ task_id: props.taskId });
