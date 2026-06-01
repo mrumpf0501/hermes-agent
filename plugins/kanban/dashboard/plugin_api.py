@@ -2163,8 +2163,8 @@ def _resolve_docs_root(board: Optional[str]) -> tuple[Optional[Path], Optional[P
     return workdir, None, ""
 
 
-def _safe_doc_relpath(root: Path, rel_path: str) -> str:
-    """Validate a relative path under ``root``; return normalised posix relpath."""
+def _normalize_doc_relpath(rel_path: str) -> str:
+    """Validate a relative path segment; return normalised posix relpath."""
     if not rel_path or not str(rel_path).strip():
         raise HTTPException(status_code=400, detail="path is required")
     normalised = str(rel_path).replace("\\", "/").strip().lstrip("/")
@@ -2173,17 +2173,53 @@ def _safe_doc_relpath(root: Path, rel_path: str) -> str:
     parts = normalised.split("/")
     if any(p in ("", ".", "..") for p in parts):
         raise HTTPException(status_code=400, detail="invalid path")
-    target = (root / normalised).resolve()
+    if Path(normalised).suffix.lower() not in _DOCS_ALLOWED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail="path must end with .md or .markdown",
+        )
+    return normalised
+
+
+def _resolve_doc_target(root: Path, rel_path: str, *, must_exist: bool) -> tuple[str, Path]:
+    """Return ``(rel, absolute_path)`` under ``root`` after validation."""
+    rel = _normalize_doc_relpath(rel_path)
+    root_resolved = root.resolve()
+    target = (root_resolved / rel).resolve()
     try:
-        if not target.is_relative_to(root.resolve()):
+        if not target.is_relative_to(root_resolved):
             raise HTTPException(status_code=403, detail="path outside documentation root")
     except ValueError:
         raise HTTPException(status_code=403, detail="path outside documentation root")
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail="file not found")
-    if target.suffix.lower() not in _DOCS_ALLOWED_SUFFIXES:
-        raise HTTPException(status_code=404, detail="not a markdown file")
-    return normalised
+    if must_exist:
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+    return rel, target
+
+
+def _safe_doc_relpath(root: Path, rel_path: str) -> str:
+    """Validate a relative path under ``root``; return normalised posix relpath."""
+    rel, _target = _resolve_doc_target(root, rel_path, must_exist=True)
+    return rel
+
+
+def _require_docs_root(board: Optional[str]) -> tuple[Path, Path, str]:
+    """Return ``(workdir, docs_root, label)`` or raise 404."""
+    _workdir, docs_root, label = _resolve_docs_root(board)
+    if docs_root is None:
+        raise HTTPException(
+            status_code=404,
+            detail="project documentation not available for this board",
+        )
+    return _workdir, docs_root, label
+
+
+def _write_doc_bytes(target: Path, content: str) -> None:
+    encoded = content.encode("utf-8")
+    if len(encoded) > _DOCS_MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="file too large")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(encoded)
 
 
 def _split_markdown_frontmatter(text: str) -> tuple[Optional[dict[str, Any]], str]:
@@ -2352,6 +2388,73 @@ def read_project_doc(
         "frontmatter": frontmatter,
         "sources": _extract_task_sources(frontmatter),
     }
+
+
+class UpdateDocBody(BaseModel):
+    """Full file contents (including optional YAML frontmatter)."""
+
+    content: str
+
+
+class CreateDocBody(BaseModel):
+    path: str
+    content: str = ""
+
+
+@router.put("/docs/file")
+def update_project_doc(
+    payload: UpdateDocBody,
+    path: str = Query(..., description="Path relative to the docs root"),
+    board: Optional[str] = Query(None),
+):
+    """Overwrite an existing markdown page."""
+    _workdir, docs_root, label = _require_docs_root(board)
+    rel, target = _resolve_doc_target(docs_root, path, must_exist=True)
+    _write_doc_bytes(target, payload.content)
+    frontmatter, body = _split_markdown_frontmatter(payload.content)
+    return {
+        "ok": True,
+        "path": rel,
+        "docs_label": label,
+        "title": (frontmatter or {}).get("title") or Path(rel).stem,
+        "body": body,
+        "sources": _extract_task_sources(frontmatter),
+    }
+
+
+@router.post("/docs/file")
+def create_project_doc(payload: CreateDocBody, board: Optional[str] = Query(None)):
+    """Create a new markdown page under the documentation tree."""
+    _workdir, docs_root, label = _require_docs_root(board)
+    rel, target = _resolve_doc_target(docs_root, payload.path, must_exist=False)
+    if target.exists():
+        raise HTTPException(status_code=409, detail="file already exists")
+    content = payload.content if payload.content is not None else ""
+    _write_doc_bytes(target, content)
+    frontmatter, body = _split_markdown_frontmatter(content)
+    return {
+        "ok": True,
+        "path": rel,
+        "docs_label": label,
+        "title": (frontmatter or {}).get("title") or Path(rel).stem,
+        "body": body,
+        "sources": _extract_task_sources(frontmatter),
+    }
+
+
+@router.delete("/docs/file")
+def delete_project_doc(
+    path: str = Query(..., description="Path relative to the docs root"),
+    board: Optional[str] = Query(None),
+):
+    """Delete a markdown page from the documentation tree."""
+    _workdir, docs_root, _label = _require_docs_root(board)
+    rel, target = _resolve_doc_target(docs_root, path, must_exist=True)
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not delete file: {exc}") from exc
+    return {"ok": True, "path": rel}
 
 
 # ---------------------------------------------------------------------------

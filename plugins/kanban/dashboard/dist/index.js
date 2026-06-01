@@ -2076,6 +2076,9 @@
     const [loading, setLoading] = useState(true);
     const [fileLoading, setFileLoading] = useState(false);
     const [err, setErr] = useState(null);
+    const [editing, setEditing] = useState(false);
+    const [draftContent, setDraftContent] = useState("");
+    const [saving, setSaving] = useState(false);
 
     const loadTree = useCallback(function () {
       setLoading(true);
@@ -2118,8 +2121,106 @@
     useEffect(function () { loadTree(); }, [loadTree]);
 
     useEffect(function () {
-      if (selectedPath) loadFile(selectedPath);
+      if (selectedPath) {
+        setEditing(false);
+        setDraftContent("");
+        loadFile(selectedPath);
+      }
     }, [selectedPath, loadFile]);
+
+    const startEdit = function () {
+      if (!fileData) return;
+      setDraftContent(fileData.content || fileData.body || "");
+      setEditing(true);
+      setErr(null);
+    };
+
+    const cancelEdit = function () {
+      setEditing(false);
+      setDraftContent("");
+    };
+
+    const saveDoc = function () {
+      if (!selectedPath || saving) return;
+      setSaving(true);
+      setErr(null);
+      const qs = new URLSearchParams({ path: selectedPath });
+      SDK.fetchJSON(withBoard(`${API}/docs/file?${qs}`, props.boardSlug), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: draftContent }),
+      })
+        .then(function () {
+          setEditing(false);
+          return loadTree().then(function () { return loadFile(selectedPath); });
+        })
+        .catch(function (e) {
+          setErr(String(e && e.message ? e.message : e));
+        })
+        .finally(function () { setSaving(false); });
+    };
+
+    const deleteDoc = function () {
+      if (!selectedPath || saving) return;
+      const msg = tx(
+        t,
+        "confirmDeleteDoc",
+        "Delete this wiki page permanently?\n\n{path}",
+        { path: selectedPath },
+      );
+      if (!window.confirm(msg)) return;
+      setSaving(true);
+      setErr(null);
+      const qs = new URLSearchParams({ path: selectedPath });
+      SDK.fetchJSON(withBoard(`${API}/docs/file?${qs}`, props.boardSlug), {
+        method: "DELETE",
+      })
+        .then(function () {
+          setEditing(false);
+          setDraftContent("");
+          setFileData(null);
+          setSelectedPath("");
+          return loadTree();
+        })
+        .catch(function (e) {
+          setErr(String(e && e.message ? e.message : e));
+        })
+        .finally(function () { setSaving(false); });
+    };
+
+    const createDoc = function () {
+      if (saving) return;
+      const raw = window.prompt(
+        tx(t, "newDocPathPrompt", "New page path (e.g. thema.md):"),
+        "new-page.md",
+      );
+      if (raw == null) return;
+      const path = raw.trim().replace(/\\/g, "/");
+      if (!path) return;
+      const template = (
+        "---\n"
+        + "title: " + path.replace(/\.md$/i, "").replace(/[-_]/g, " ") + "\n"
+        + "updated_at: " + new Date().toISOString().slice(0, 10) + "\n"
+        + "---\n\n"
+      );
+      setSaving(true);
+      setErr(null);
+      SDK.fetchJSON(withBoard(`${API}/docs/file`, props.boardSlug), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: path, content: template }),
+      })
+        .then(function () {
+          return loadTree().then(function (data) {
+            setSelectedPath(path);
+            return data;
+          });
+        })
+        .catch(function (e) {
+          setErr(String(e && e.message ? e.message : e));
+        })
+        .finally(function () { setSaving(false); });
+    };
 
     const renderMd = props.renderMarkdown !== false;
     const sources = (fileData && fileData.sources) || [];
@@ -2132,10 +2233,20 @@
           ? h("span", { className: "hermes-kanban-docs-sub" }, meta.docs_label)
           : null,
         h("div", { className: "flex-1" }),
+        entries.length > 0
+          ? h(Button, {
+              size: "sm",
+              variant: "outline",
+              title: tx(t, "newDocPage", "Create a new wiki page"),
+              disabled: saving,
+              onClick: createDoc,
+            }, tx(t, "newPage", "New page"))
+          : null,
         h(Button, {
           size: "sm",
           variant: "ghost",
           title: tx(t, "refreshDocs", "Reload documentation tree"),
+          disabled: saving,
           onClick: function () { loadTree().then(function () { if (selectedPath) loadFile(selectedPath); }); },
         }, tx(t, "refresh", "Refresh")),
         h(Button, {
@@ -2177,15 +2288,57 @@
               }),
             ),
             h("article", { className: "hermes-kanban-docs-article" },
+              err && entries.length > 0
+                ? h("div", { className: "text-xs text-destructive mb-2" }, err)
+                : null,
               fileLoading
                 ? h("div", { className: "text-xs text-muted-foreground" },
                     tx(t, "loadingPage", "Loading page…"))
                 : null,
               fileData
                 ? h("div", null,
-                    h("h3", { className: "hermes-kanban-docs-page-title" },
-                      fileData.title || fileData.path),
-                    sources.length > 0
+                    h("div", { className: "hermes-kanban-docs-article-toolbar" },
+                      h("h3", { className: "hermes-kanban-docs-page-title" },
+                        fileData.title || fileData.path),
+                      h("div", { className: "hermes-kanban-docs-article-actions" },
+                        editing
+                          ? [
+                              h(Button, {
+                                key: "save",
+                                size: "sm",
+                                disabled: saving,
+                                onClick: saveDoc,
+                              }, saving
+                                ? tx(t, "saving", "Saving…")
+                                : tx(t, "save", "Save")),
+                              h(Button, {
+                                key: "cancel",
+                                size: "sm",
+                                variant: "outline",
+                                disabled: saving,
+                                onClick: cancelEdit,
+                              }, tx(t, "cancel", "Cancel")),
+                            ]
+                          : [
+                              h(Button, {
+                                key: "edit",
+                                size: "sm",
+                                variant: "outline",
+                                disabled: saving,
+                                onClick: startEdit,
+                              }, tx(t, "edit", "Edit")),
+                              h(Button, {
+                                key: "delete",
+                                size: "sm",
+                                variant: "outline",
+                                disabled: saving,
+                                onClick: deleteDoc,
+                                title: tx(t, "deleteDocPage", "Delete this wiki page"),
+                              }, tx(t, "delete", "Delete")),
+                            ],
+                      ),
+                    ),
+                    !editing && sources.length > 0
                       ? h("div", { className: "hermes-kanban-docs-sources" },
                           h("div", { className: "text-xs text-muted-foreground mb-1" },
                             tx(t, "docSources", "Changed by tasks:")),
@@ -2203,10 +2356,18 @@
                           }),
                         )
                       : null,
-                    h(MarkdownBlock, {
-                      source: fileData.body || fileData.content || "",
-                      enabled: renderMd,
-                    }),
+                    editing
+                      ? h("textarea", {
+                          className: "hermes-kanban-docs-editor",
+                          value: draftContent,
+                          onChange: function (e) { setDraftContent(e.target.value); },
+                          spellCheck: true,
+                          disabled: saving,
+                        })
+                      : h(MarkdownBlock, {
+                          source: fileData.body || fileData.content || "",
+                          enabled: renderMd,
+                        }),
                   )
                 : h("div", { className: "text-xs text-muted-foreground" },
                     tx(t, "pickDocPage", "Select a page from the list.")),

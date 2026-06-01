@@ -2268,6 +2268,52 @@ def test_docs_file_frontmatter_and_sources(client, kanban_home, tmp_path):
     assert data["sources"] == [{"task": "t_deadbeef", "action": "updated"}]
 
 
+def test_docs_update_and_delete_file(client, kanban_home, tmp_path):
+    project = tmp_path / "proj"
+    wiki = project / "docs" / "wiki"
+    wiki.mkdir(parents=True)
+    (wiki / "edit-me.md").write_text("# Old\n", encoding="utf-8")
+    kb.create_board("edit-board", default_workdir=str(project))
+
+    r = client.put(
+        "/api/plugins/kanban/docs/file",
+        params={"board": "edit-board", "path": "edit-me.md"},
+        json={"content": "# New title\n\nUpdated body.\n"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+    assert (wiki / "edit-me.md").read_text(encoding="utf-8") == "# New title\n\nUpdated body.\n"
+
+    r = client.delete(
+        "/api/plugins/kanban/docs/file",
+        params={"board": "edit-board", "path": "edit-me.md"},
+    )
+    assert r.status_code == 200
+    assert not (wiki / "edit-me.md").exists()
+
+
+def test_docs_create_file(client, kanban_home, tmp_path):
+    project = tmp_path / "proj"
+    wiki = project / "docs" / "wiki"
+    wiki.mkdir(parents=True)
+    kb.create_board("new-board", default_workdir=str(project))
+
+    r = client.post(
+        "/api/plugins/kanban/docs/file",
+        params={"board": "new-board"},
+        json={"path": "neu.md", "content": "---\ntitle: Neu\n---\n\n"},
+    )
+    assert r.status_code == 200, r.text
+    assert (wiki / "neu.md").exists()
+
+    r = client.post(
+        "/api/plugins/kanban/docs/file",
+        params={"board": "new-board"},
+        json={"path": "neu.md", "content": "dup"},
+    )
+    assert r.status_code == 409
+
+
 def test_docs_file_rejects_path_traversal(client, kanban_home, tmp_path):
     project = tmp_path / "proj"
     wiki = project / "docs" / "wiki"
@@ -2307,5 +2353,8 @@ def test_dashboard_project_docs_panel_wired():
 
     assert "ProjectDocsPanel" in js
     assert "${API}/docs" in js
+    assert 'method: "PUT"' in js
+    assert 'method: "DELETE"' in js
+    assert "hermes-kanban-docs-editor" in css
     assert "onToggleDocs" in js
     assert "hermes-kanban-docs" in css

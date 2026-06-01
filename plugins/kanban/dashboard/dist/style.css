@@ -1760,10 +1760,48 @@
   padding-right: 0.25rem;
 }
 
+.hermes-kanban-docs-article-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.hermes-kanban-docs-article-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
 .hermes-kanban-docs-page-title {
   font-size: 1rem;
   font-weight: 600;
-  margin: 0 0 0.5rem;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.hermes-kanban-docs-editor {
+  width: 100%;
+  min-height: 14rem;
+  max-height: 36vh;
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--color-border, #333);
+  border-radius: var(--radius-sm, 0.25rem);
+  background: color-mix(in srgb, var(--color-background, #111) 85%, transparent);
+  color: inherit;
+}
+
+.hermes-kanban-docs-editor:focus {
+  outline: 2px solid var(--color-ring, #666);
+  outline-offset: 1px;
 }
 
 .hermes-kanban-docs-sources {

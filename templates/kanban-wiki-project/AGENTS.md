@@ -24,6 +24,27 @@
 
 **Board** = harte Grenze (eigene Queue, eigene DB). **Tenant** = Filter + Memory-Prefix. **Dokumentation** = Dateien im `dir:`-Workspace, nicht nur Kanban-Kommentare.
 
+> **Wichtig für den Default-Agenten (Mail, Gateway, allgemeine Chats):** Diese Datei liegt im
+> Projekt-Root und wird nur geladen, wenn der Agent dort arbeitet (`TERMINAL_CWD` = Projektordner).
+> Der **Default-Profil**-Agent sieht sie bei E-Mail/Sorger **nicht** automatisch — dort brauchst du
+> dieselbe Board-Tabelle in `~/.hermes/profiles/default/AGENTS.md` (siehe unten).
+
+### Board-Routing (immer explizit `board` setzen)
+
+Ohne `board` / `--board` landet jede Karte auf dem **aktuellen Board**
+(`hermes kanban boards show` → „current“, Datei `~/.hermes/kanban/current`). Das ist **nicht**
+automatisch dieses Projekt.
+
+| Thema | Board-Slug | Beispiel |
+|-------|------------|----------|
+| Schlummerpost (Content, Wiki, Social, Kampagne, Buffer) | `schlummerpost` | `kanban_create(..., board="schlummerpost")` |
+| Sorger, Bestellungen, andere Kunden, generische Ops | `default` | `kanban_create(..., board="default")` |
+
+CLI: `hermes kanban --board default create "…"` bzw. `--board schlummerpost create "…"`.
+Slash: `/kanban --board default create "…"`.
+
+**Nicht** nur „im Chat sagen“ — der Dispatcher und `kanban_create` lesen die Datei `current`, nicht den Chat-Verlauf.
+
 ---
 
 ## Workspace-Regeln
@@ -121,7 +142,8 @@ Beispiele:
 
 | Ziel | Werkzeug |
 |------|----------|
-| Karte auf Board **Schlummerpost** | `kanban_create` / `hermes kanban create` / `/kanban create` |
+| Karte auf Board **Schlummerpost** | `kanban_create` mit `board="schlummerpost"` (oder CLI `--board schlummerpost`) |
+| Karte **nicht** Schlummerpost (z. B. Sorger) | `board="default"` — **nie** ohne `board` anlegen |
 | Externes **Linear.app** | Nur mit `LINEAR_API_KEY` und Linear-Skill — **nicht** für dieses Board |
 
 ---
