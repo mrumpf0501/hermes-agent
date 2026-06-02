@@ -4,10 +4,10 @@ description: >-
   Logs into Sorger Mittagessen (mittagessen.sorgerbrot.at), picks a date on the
   dish-selection page, lists allergen-safe options (no A/G), asks gateway users
   to confirm pre-order, then logs in again to order via per-row **+** buttons
-  (multi-dish allowed), submits at page bottom, and verifies the save banner.
+  (multi-dish allowed), submits via qty field **1** + Enter, and verifies the save banner.
   Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.9
+version: 1.2.0
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -355,10 +355,10 @@ If the date control is not in the snapshot, try `browser_snapshot(full=true)` or
 | Phase | Goal | Task state |
 |-------|------|------------|
 | **A — Scout** | Login, pick date, list safe options | Comment + metadata; **block** awaiting user |
-| **B — Order** | User chose one or more options; login, `+` per row, submit at page end | **Complete** after success banner |
+| **B — Order** | User chose one or more options; login, `+` per row, qty **`1`** + Enter | **Complete** after success banner |
 
 Same browser sequence in both phases: Datenschutz → Login → (Phase A: read menu;
-Phase B: **`+`** per chosen row → bottom submit → verify save banner).
+Phase B: **`+`** per chosen row → click qty field **`1`** + **Enter** → verify save banner).
 
 Detect Phase B when:
 
@@ -505,7 +505,8 @@ Default **`qty`: 1** per choice unless the user asked for more of the same optio
 2. Open **„Bitte wählen Sie die Speisen aus, die Sie gerne hätten.“**
 3. Select the **same date** as Phase A (`date_iso` / `date_label` from comments).
 4. For **each** resolved choice, set quantity on **that dish’s row** via **`+`** (below).
-5. At the **bottom of the page**, click the order **submit** button (below).
+5. **Submit the order** via the quantity field + **Enter** (below) — after the **last**
+   selected row shows **`1`**.
 6. `browser_snapshot()` — verify the **success banner** at the top (below).
 
 Do **not** click only the dish title. Do **not** submit until every selected row shows
@@ -516,9 +517,9 @@ the required quantity.
 Each dish row/card has a quantity control on the right:
 
 ```text
-[ − ]   0   [ + ]
-        ↑       ↑ use this — do NOT browser_type "1" into the middle
-   read-only or display field
+[ − ]   1   [ + ]
+        ↑       ↑
+   qty field   use + to reach 1 — do NOT browser_type "1" to set quantity
 ```
 
 For **each** dish in `sorger-choice.choices`:
@@ -527,25 +528,39 @@ For **each** dish in `sorger-choice.choices`:
    the dish name). Identify its ref (e.g. `@e12`).
 2. Click **`+` once per portion** (default 1× `+` → quantity **1**; for `qty: 2` click
    **`+` twice**, snapshot between clicks if the UI only increments by one).
-3. **Do not** use `browser_type` on the number field to enter `1` — Sorger expects
-   UI interaction via **`+`** / **`−`**, not typed text.
+3. **Do not** use `browser_type` on the quantity field to **set** quantity — use **`+`**
+   only. (Typing `1` is not how Sorger expects the count to change.)
 4. `browser_snapshot()` — verify **that row** displays **`1`** (or the target qty).
    Unselected rows may stay at **`0`**.
-5. Repeat for the next chosen dish until all choices are set.
+5. Repeat for the next chosen dish until **all** choices are set.
 
 Do **not** `kanban_complete` if any selected row still shows **`0`** when it should be **`1`**.
 
-#### Submit at the page bottom
+#### Submit: quantity field **`1`** + **Enter** (preferred)
 
-After every selected row shows the correct quantity:
+After the **last** selected dish shows **`1`** in its quantity field (multi-dish:
+finish every **`+`** first, then submit once):
 
-1. `browser_snapshot(full=true)` if needed — scroll mentally to the **page end**
-   (footer area below all dish rows).
-2. Find the **submit** control at the **bottom** of the Speisen page (label varies:
-   e.g. **Bestellen**, **Vorbestellen**, **Speichern** — not the per-row `+` buttons).
-3. `browser_click` on that bottom submit button (same fallback chain as login:
-   Enter / `form.requestSubmit()` only if click fails).
-4. `browser_snapshot()` — look at the **top** of the page for the confirmation line.
+1. `browser_snapshot()` — on the **last** dish you updated (final entry in
+   `sorger-choice.choices`), find the **quantity input** in that row — the box
+   between **`−`** and **`+`** that now displays **`1`**.
+2. `browser_click` on that quantity field (focus the field showing **`1`** — do not
+   click **`+`** or **`−`** here).
+3. `browser_press(key="Enter")` (Return) to send/submit the order.
+4. `browser_snapshot()` — look at the **top** for the save banner (below).
+
+This is **not** typing `1` into the field — the value is already **`1`** from the **`+`**
+steps. You only **click the field** and press **Enter**.
+
+#### Submit fallback (only if Enter on qty field did not save)
+
+If there is still no **„Die Bestellung für … wurde gespeichert“** banner:
+
+1. `browser_snapshot(full=true)` — locate the **bottom** submit button (e.g.
+   **Bestellen**, **Vorbestellen**, **Speichern**).
+2. Try **`form.requestSubmit()`** on the order form via `browser_console`, then
+   **`browser_click`** on that button, then **Enter** again.
+3. `browser_snapshot()` — re-check the top banner.
 
 #### Success verification (required)
 
@@ -639,7 +654,9 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 - Clicking only the dish title without **`+`** on that row
 - Leaving any **selected** row at **`0`** and submitting
 - Submitting before every selected row shows **`1`** (or requested qty)
-- Submitting via a control that is not the **bottom-of-page** order button
+- Submitting only via the bottom button **without** trying qty field **`1`** + **Enter** first
+- Pressing Enter before every selected row shows **`1`**
+- Using `browser_type` to **set** quantity (use **`+`**); confusing that with submit click on **`1`**
 - `kanban_complete` without top banner **„Die Bestellung für … wurde gespeichert“**
 - Only ordering one dish when the user selected **multiple** options
 - Putting dishes with **only** O/M/other codes in `excluded_dishes` (only **A/G** go there)
@@ -676,8 +693,9 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | `excluded` lists O/M only; `eligible` all `[]` | Inverted or wrong page — re-read rules; use Speisen page; O/M → eligible |
 | A/G dishes still in numbered list | Re-run `partition_allergens.py`; never hand-bucket; Moussaka/Paprikasuppe with G → excluded only |
 | JSON has G in `eligible_dishes` | Script skipped — any `allergens` with G or A must not be in eligible; re-partition |
-| Order “done” but row still `0` | Click **`+`** on that row (not `browser_type`), verify `1`, then bottom submit |
-| No save banner after submit | Retry bottom submit; snapshot top — need „Die Bestellung für … wurde gespeichert“ |
+| Order “done” but row still `0` | Click **`+`** on that row (not `browser_type`), verify `1`, then qty field + **Enter** |
+| No save banner after submit | Click last row’s qty field showing `1`, **Enter**; then bottom button / `requestSubmit` |
+| Enter did nothing | Snapshot: all chosen rows at `1`? Focus correct field (between −/+), not dish title |
 | Typed `1` but UI ignored it | Use **`+`** only; re-verify row shows `1` |
 
 ---
