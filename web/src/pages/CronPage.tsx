@@ -557,7 +557,7 @@ export default function CronPage() {
                     aria-label={t.cron.editJob}
                     onClick={() => openEditModal(job)}
                   >
-                    <Pencil />
+                    <Pencil className="h-4 w-4" />
                   </Button>
 
                   <Button

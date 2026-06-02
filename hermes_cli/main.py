@@ -6824,6 +6824,65 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False, force: bool = False) ->
     return True
 
 
+def _is_hermes_checkout_root(path: Path) -> bool:
+    """True when *path* looks like a Hermes git checkout (web/ + hermes_cli/)."""
+    return (path / "web" / "package.json").is_file() and (path / "hermes_cli").is_dir()
+
+
+def _find_hermes_checkout_root() -> Path | None:
+    """Locate a Hermes source checkout for building/serving the dashboard SPA.
+
+    When ``hermes`` is installed via pip (non-editable), ``PROJECT_ROOT`` points
+    at site-packages, not ``~/hermes-agent``. Operators often ``git pull`` and
+    ``npm run build`` in the checkout while the dashboard still serves the
+    wheel's baked ``hermes_cli/web_dist``. This helper finds that checkout.
+    """
+    seen: set[str] = set()
+    candidates: list[Path] = []
+    for env_name in ("HERMES_ROOT", "HERMES_AGENT_ROOT"):
+        env_val = os.environ.get(env_name)
+        if env_val:
+            candidates.append(Path(env_val))
+    candidates.append(PROJECT_ROOT)
+    candidates.append(Path.cwd())
+    candidates.extend(Path.cwd().parents[:5])
+    candidates.append(Path.home() / "hermes-agent")
+    for base in candidates:
+        try:
+            resolved = base.resolve()
+        except OSError:
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_hermes_checkout_root(resolved):
+            return resolved
+    return None
+
+
+def _dashboard_web_dist_dir(checkout: Path | None) -> Path:
+    """Return the directory that should hold the built SPA (before env override)."""
+    if checkout is not None:
+        return checkout / "hermes_cli" / "web_dist"
+    return PROJECT_ROOT / "hermes_cli" / "web_dist"
+
+
+def _ensure_dashboard_web_dist_env(checkout: Path | None) -> Path:
+    """Set ``HERMES_WEB_DIST`` before ``hermes_cli.web_server`` is imported."""
+    if "HERMES_WEB_DIST" in os.environ:
+        return Path(os.environ["HERMES_WEB_DIST"])
+    dist = _dashboard_web_dist_dir(checkout)
+    if (dist / "index.html").is_file():
+        os.environ["HERMES_WEB_DIST"] = str(dist)
+        return dist
+    packaged = (Path(__file__).parent / "web_dist").resolve()
+    if (packaged / "index.html").is_file():
+        os.environ["HERMES_WEB_DIST"] = str(packaged)
+        return packaged
+    return dist
+
+
 def _find_stale_dashboard_pids() -> list[int]:
     """Return PIDs of ``hermes dashboard`` processes other than ourselves.
 
@@ -11080,9 +11139,13 @@ def cmd_dashboard(args):
         print(f"Import error: {e}")
         sys.exit(1)
 
+    checkout = _find_hermes_checkout_root()
+    web_dir = (checkout / "web") if checkout else (PROJECT_ROOT / "web")
+    dist_root = _dashboard_web_dist_dir(checkout)
+
     if "HERMES_WEB_DIST" not in os.environ and not getattr(args, "skip_build", False):
         if not _build_web_ui(
-            PROJECT_ROOT / "web",
+            web_dir,
             fatal=True,
             force=getattr(args, "rebuild", False),
         ):
@@ -11094,7 +11157,7 @@ def cmd_dashboard(args):
         _dist_root = (
             Path(os.environ["HERMES_WEB_DIST"])
             if "HERMES_WEB_DIST" in os.environ
-            else PROJECT_ROOT / "hermes_cli" / "web_dist"
+            else dist_root
         )
         if not (_dist_root / "index.html").exists():
             print(f"✗ --skip-build was passed but no web dist found at: {_dist_root}")
@@ -11102,6 +11165,15 @@ def cmd_dashboard(args):
             print("  Or drop --skip-build to build automatically.")
             sys.exit(1)
         print(f"→ Skipping web UI build (--skip-build); using dist at {_dist_root}")
+
+    served_dist = _ensure_dashboard_web_dist_env(checkout)
+    if (served_dist / "index.html").is_file():
+        print(f"→ Serving web UI from {served_dist}")
+    else:
+        print(
+            f"⚠ No web UI bundle at {served_dist} — dashboard pages will 404.\n"
+            "  Build with:  cd web && npm install && npm run build"
+        )
 
     # Discover and load plugins so any DashboardAuthProvider plugin
     # (e.g. plugins/dashboard_auth/nous) registers BEFORE start_server's

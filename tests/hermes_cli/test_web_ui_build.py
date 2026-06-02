@@ -12,7 +12,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-from hermes_cli.main import _web_ui_build_needed, _build_web_ui, _run_npm_install_deterministic
+from hermes_cli.main import (
+    _build_web_ui,
+    _dashboard_web_dist_dir,
+    _ensure_dashboard_web_dist_env,
+    _find_hermes_checkout_root,
+    _is_hermes_checkout_root,
+    _run_npm_install_deterministic,
+    _web_ui_build_needed,
+)
 
 
 def _touch(path: Path, offset: float = 0.0) -> None:
@@ -225,3 +233,53 @@ class TestBuildWebUIRetryAndStaleFallback:
         assert "Web UI build failed" in out
         assert "vite ENOMEM" in out
         assert "Run manually" in out
+
+
+class TestFindHermesCheckoutRoot:
+
+    def test_detects_checkout_from_cwd_parent(self, tmp_path, monkeypatch):
+        (tmp_path / "web").mkdir()
+        (tmp_path / "web" / "package.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "hermes_cli").mkdir()
+        monkeypatch.chdir(tmp_path / "web")
+        assert _find_hermes_checkout_root() == tmp_path.resolve()
+
+    def test_hermes_root_env(self, tmp_path, monkeypatch):
+        (tmp_path / "web" / "package.json").parent.mkdir(parents=True)
+        (tmp_path / "web" / "package.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "hermes_cli").mkdir()
+        monkeypatch.setenv("HERMES_ROOT", str(tmp_path))
+        assert _find_hermes_checkout_root() == tmp_path.resolve()
+
+    def test_returns_none_without_layout(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert _find_hermes_checkout_root() is None
+
+
+class TestDashboardWebDistEnv:
+
+    def test_prefers_checkout_dist_over_packaged(self, tmp_path, monkeypatch):
+        checkout = tmp_path / "checkout"
+        (checkout / "web" / "package.json").parent.mkdir(parents=True)
+        (checkout / "web" / "package.json").write_text("{}", encoding="utf-8")
+        (checkout / "hermes_cli").mkdir()
+        dist = checkout / "hermes_cli" / "web_dist"
+        _touch(dist / "index.html")
+        monkeypatch.delenv("HERMES_WEB_DIST", raising=False)
+        resolved = _ensure_dashboard_web_dist_env(checkout)
+        assert resolved == dist.resolve()
+        assert os.environ["HERMES_WEB_DIST"] == str(dist.resolve())
+
+    def test_dashboard_web_dist_dir_uses_checkout(self, tmp_path):
+        checkout = tmp_path / "repo"
+        (checkout / "web" / "package.json").parent.mkdir(parents=True)
+        (checkout / "hermes_cli").mkdir()
+        assert _dashboard_web_dist_dir(checkout) == checkout / "hermes_cli" / "web_dist"
+
+    def test_is_hermes_checkout_root(self, tmp_path):
+        root = tmp_path / "r"
+        (root / "web" / "package.json").parent.mkdir(parents=True)
+        (root / "web" / "package.json").write_text("{}", encoding="utf-8")
+        (root / "hermes_cli").mkdir()
+        assert _is_hermes_checkout_root(root) is True
+        assert _is_hermes_checkout_root(tmp_path) is False
