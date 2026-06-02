@@ -6719,21 +6719,22 @@ def _run_npm_install_deterministic(
     )
 
 
-def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
+def _build_web_ui(web_dir: Path, *, fatal: bool = False, force: bool = False) -> bool:
     """Build the web UI frontend if npm is available.
 
     Args:
         web_dir: Path to the ``web/`` source directory.
         fatal: If True, print error guidance and return False on failure
                instead of a soft warning (used by ``hermes web``).
+        force: If True, run ``npm run build`` even when the dist sentinel
+               looks fresh (``hermes dashboard --rebuild``).
 
     Returns True if the build succeeded or was skipped (no package.json).
     """
     if not (web_dir / "package.json").exists():
         return True
 
-    if not _web_ui_build_needed(web_dir):
-        return True
+    dist_dir = web_dir.parent / "hermes_cli" / "web_dist"
 
     # Console-encoding-safe print: Windows consoles default to cp1252
     # (or similar) and will raise UnicodeEncodeError on arrow / check
@@ -6746,6 +6747,10 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
         except UnicodeEncodeError:
             encoding = getattr(sys.stdout, "encoding", None) or "ascii"
             print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
+    if not force and not _web_ui_build_needed(web_dir):
+        _say(f"→ Web UI bundle up to date ({dist_dir})")
+        return True
 
     npm = shutil.which("npm")
     if not npm:
@@ -6823,6 +6828,65 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
         return False
     _say("  ✓ Web UI built")
     return True
+
+
+def _is_hermes_checkout_root(path: Path) -> bool:
+    """True when *path* looks like a Hermes git checkout (web/ + hermes_cli/)."""
+    return (path / "web" / "package.json").is_file() and (path / "hermes_cli").is_dir()
+
+
+def _find_hermes_checkout_root() -> Path | None:
+    """Locate a Hermes source checkout for building/serving the dashboard SPA.
+
+    When ``hermes`` is installed via pip (non-editable), ``PROJECT_ROOT`` points
+    at site-packages, not ``~/hermes-agent``. Operators often ``git pull`` and
+    ``npm run build`` in the checkout while the dashboard still serves the
+    wheel's baked ``hermes_cli/web_dist``.
+    """
+    seen: set[str] = set()
+    candidates: list[Path] = []
+    for env_name in ("HERMES_ROOT", "HERMES_AGENT_ROOT"):
+        env_val = os.environ.get(env_name)
+        if env_val:
+            candidates.append(Path(env_val))
+    candidates.append(PROJECT_ROOT)
+    candidates.append(Path.cwd())
+    candidates.extend(Path.cwd().parents[:5])
+    candidates.append(Path.home() / "hermes-agent")
+    for base in candidates:
+        try:
+            resolved = base.resolve()
+        except OSError:
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_hermes_checkout_root(resolved):
+            return resolved
+    return None
+
+
+def _dashboard_web_dist_dir(checkout: Path | None) -> Path:
+    """Return the directory that should hold the built SPA (before env override)."""
+    if checkout is not None:
+        return checkout / "hermes_cli" / "web_dist"
+    return PROJECT_ROOT / "hermes_cli" / "web_dist"
+
+
+def _ensure_dashboard_web_dist_env(checkout: Path | None) -> Path:
+    """Set ``HERMES_WEB_DIST`` before ``hermes_cli.web_server`` is imported."""
+    if "HERMES_WEB_DIST" in os.environ:
+        return Path(os.environ["HERMES_WEB_DIST"])
+    dist = _dashboard_web_dist_dir(checkout)
+    if (dist / "index.html").is_file():
+        os.environ["HERMES_WEB_DIST"] = str(dist)
+        return dist
+    packaged = (Path(__file__).parent / "web_dist").resolve()
+    if (packaged / "index.html").is_file():
+        os.environ["HERMES_WEB_DIST"] = str(packaged)
+        return packaged
+    return dist
 
 
 def _find_stale_dashboard_pids() -> list[int]:
@@ -11081,8 +11145,16 @@ def cmd_dashboard(args):
         print(f"Import error: {e}")
         sys.exit(1)
 
+    checkout = _find_hermes_checkout_root()
+    web_dir = (checkout / "web") if checkout else (PROJECT_ROOT / "web")
+    dist_root = _dashboard_web_dist_dir(checkout)
+
     if "HERMES_WEB_DIST" not in os.environ and not getattr(args, "skip_build", False):
-        if not _build_web_ui(PROJECT_ROOT / "web", fatal=True):
+        if not _build_web_ui(
+            web_dir,
+            fatal=True,
+            force=getattr(args, "rebuild", False),
+        ):
             sys.exit(1)
     elif getattr(args, "skip_build", False):
         # --skip-build trusts the caller to have pre-built the web UI.
@@ -11091,7 +11163,7 @@ def cmd_dashboard(args):
         _dist_root = (
             Path(os.environ["HERMES_WEB_DIST"])
             if "HERMES_WEB_DIST" in os.environ
-            else PROJECT_ROOT / "hermes_cli" / "web_dist"
+            else dist_root
         )
         if not (_dist_root / "index.html").exists():
             print(f"✗ --skip-build was passed but no web dist found at: {_dist_root}")
@@ -11099,6 +11171,15 @@ def cmd_dashboard(args):
             print("  Or drop --skip-build to build automatically.")
             sys.exit(1)
         print(f"→ Skipping web UI build (--skip-build); using dist at {_dist_root}")
+
+    served_dist = _ensure_dashboard_web_dist_env(checkout)
+    if (served_dist / "index.html").is_file():
+        print(f"→ Serving web UI from {served_dist}")
+    else:
+        print(
+            f"⚠ No web UI bundle at {served_dist} — dashboard pages will 404.\n"
+            "  Build with:  cd web && npm install && npm run build"
+        )
 
     # Discover and load plugins so any DashboardAuthProvider plugin
     # (e.g. plugins/dashboard_auth/nous) registers BEFORE start_server's
@@ -14369,6 +14450,14 @@ Examples:
         help=(
             "Expose the in-browser Chat tab (embedded `hermes --tui` via PTY/WebSocket). "
             "Alternatively set HERMES_DASHBOARD_TUI=1."
+        ),
+    )
+    dashboard_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help=(
+            "Force a fresh Vite build into hermes_cli/web_dist/ before starting "
+            "(use after git pull when dashboard pages look stale)"
         ),
     )
     dashboard_parser.add_argument(
