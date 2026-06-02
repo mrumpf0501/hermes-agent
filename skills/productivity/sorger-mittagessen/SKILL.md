@@ -7,7 +7,7 @@ description: >-
   (multi-dish allowed), submits at page bottom, and verifies the save banner.
   Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.8
+version: 1.1.9
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -39,6 +39,26 @@ on the ticket.
 
 Create tasks with `board="default"` and `skills=["sorger-mittagessen"]`. Never use
 the Schlummerpost board for Sorger work.
+
+## CRITICAL — Login: `browser_type` does not read `$SORGER_*`
+
+`browser_type(text="$SORGER_USER")` types the **literal characters**
+`$`, `S`, `O`, `R`, `G`, `E`, `R`, `_`, `U`, `S`, `E`, `R` — **not** your username.
+The site then always shows **„Der Login ist fehlgeschlagen.“** even when `.env` is
+correct.
+
+| Wrong (always fails) | Right |
+|----------------------|--------|
+| `text="$SORGER_USER"` | `terminal` → read output → `text="<that exact string>"` |
+| `text="${SORGER_PASSWORD}"` | Same for password |
+| Telling the user you used `${SORGER_USER}` | You did **not** use the env var — you typed its **name** |
+
+**Before any login `browser_type`:** run the mandatory gate in
+[Login credentials](#login-credentials--mandatory-terminal-gate). **After fill:**
+snapshot must **not** show `$` or `SORGER_USER` inside the username field.
+
+In `kanban_block` / user-facing text: never write `${SORGER_USER}` or
+`${SORGER_PASSWORD}` — say „Anmeldedaten aus dem Profil-Environment (.env)“.
 
 ## Credentials and allergen policy
 
@@ -197,63 +217,76 @@ browser_snapshot(task_id="t_a1b2c3")
 
 If you omit `task_id`, login and later steps may hit different browser sessions.
 
-## Login credentials — do not use `$SORGER_*` in `browser_type`
+## Login credentials — mandatory terminal gate
 
-`browser_type(text=...)` sends **exactly** the string you pass. It does **not**
-run a shell — `text="$SORGER_USER"` types the eleven characters
-`$`, `S`, `O`, `R`, `G`, `E`, `R`, `_`, `U`, `S`, `E`, `R` into the form. That
-is a common failure mode.
+`browser_type` has **no shell**. Only `terminal` expands `$SORGER_USER` / `$SORGER_PASSWORD`.
 
-**Never:**
+### Gate (run once per login attempt — before filling fields)
 
-```
-browser_type(ref="@e2", text="$SORGER_USER")
-browser_type(ref="@e3", text="$SORGER_PASSWORD")
+```bash
+test -n "$SORGER_USER" && echo USER_OK || echo USER_MISSING
+test -n "$SORGER_PASSWORD" && echo PASS_OK || echo PASS_MISSING
 ```
 
-### Recommended: read env, then `browser_type` real values
+If **MISSING** → fix `~/.hermes/profiles/<assignee>/.env` or gateway env; `kanban_block`
+with „SORGER_USER/SORGER_PASSWORD nicht im Worker-Environment“ — **do not** try login.
 
-After `browser_snapshot` gives refs for username and password fields:
-
-1. Read credentials (values must appear in tool output — do not paste them into
-   comments or task text):
+Then load secrets (tool output is for **you only** — never in `kanban_comment`):
 
 ```
 terminal(command='printf "%s" "${SORGER_USER}"')
 terminal(command='printf "%s" "${SORGER_PASSWORD}"')
 ```
 
-2. Use the **returned strings** (not `$SORGER_…`) in separate `browser_type` calls:
+- Output must be **non-empty** and must **not** equal the literal strings `SORGER_USER`,
+  `$SORGER_USER`, or `${SORGER_USER}`.
+- If empty → env not loaded; do not proceed.
+
+### Fill login fields (pick one method)
+
+**Method A — `browser_type` with values from terminal output** (separate calls):
 
 ```
-browser_type(ref="@e2", text="<actual username from step 1>")
-browser_type(ref="@e3", text="<actual password from step 2>", task_id="t_a1b2c3")
+browser_type(ref="@e2", text="<username copied from terminal — no $ character>")
+browser_type(ref="@e3", text="<password copied from terminal>", task_id="t_a1b2c3")
 ```
 
-If `SORGER_PASSWORD` is empty in terminal output, the variable is missing in the
-worker environment or was stripped — fix profile `.env` / gateway env; loading
-this skill should register passthrough for `SORGER_PASSWORD`.
+**Forbidden** — will always fail login:
 
-### Alternative: `browser_console` fill (same snapshot refs)
+```
+browser_type(ref="@e2", text="$SORGER_USER")
+browser_type(ref="@e3", text="${SORGER_PASSWORD}")
+browser_type(ref="@e2", text="SORGER_USER")
+```
 
-After you have the real username and password strings (via `terminal` above),
-set fields in the page without re-typing through `browser_type`:
+**Method B — `browser_console` fill** (often safer — paste real strings into JS once):
 
 ```javascript
 (() => {
   const u = document.querySelector('input[type="text"], input:not([type="password"])');
   const p = document.querySelector('input[type="password"]');
   if (!u || !p) return "fields not found";
-  u.value = "<actual username>";
-  p.value = "<actual password>";
+  u.value = "<username from terminal>";
+  p.value = "<password from terminal>";
   u.dispatchEvent(new Event("input", { bubbles: true }));
   p.dispatchEvent(new Event("input", { bubbles: true }));
   return "filled";
 })()
 ```
 
-Replace the placeholders with the real values from `printenv` / `printf` — not
-`$SORGER_USER`.
+Replace `<username from terminal>` / `<password from terminal>` with the **actual**
+characters from the `printf` output — never the text `SORGER_USER` or `$SORGER_*`.
+
+### Verify fill before submit
+
+`browser_snapshot()` on the login form:
+
+- Username field must show the **real login name**, not `$`, not `SORGER_USER`, not
+  `${SORGER_USER}`.
+- If the field contains **`$` or `SORGER_`** → you used Method wrong; clear fields,
+  re-run terminal gate, fill again. **Do not** blame „falsche Credentials“ yet.
+
+Only after verification → [Login and consent](#login-and-consent) submit sequence.
 
 ## Login and consent
 
@@ -622,6 +655,8 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 - Wrong Kanban board (`schlummerpost`)
 - `curl` / `web_extract` instead of browser for login and order
 - Login: clicking **Anmelden** before `form.requestSubmit()` — always **requestSubmit** first
+- Any `browser_type` text containing `$`, `SORGER_USER`, or `SORGER_PASSWORD` as literal input
+- Writing `${SORGER_USER}` / `${SORGER_PASSWORD}` in block reasons or user messages
 
 ---
 
@@ -634,7 +669,9 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | Blocked but user answered | Orchestrator/user: `/kanban comment t_… "2"` then `/kanban unblock t_…` |
 | Same page after login | `requestSubmit` first, then login button click, then Enter; snapshot each step |
 | `send_message` fails | `action=list`; use `Notify:` from body; rely on block notifier + comment |
-| Login fields show `$SORGER_USER` | Used `browser_type` with shell syntax — use `terminal` + real strings (see above) |
+| Login fields show `$SORGER_USER` | Typed variable **name**, not value — `terminal` + `printf`, then real strings only |
+| „Login fehlgeschlagen“ + you cited `${SORGER_USER}` | Proof of bug — re-login with terminal gate; never mention `${…}` to user |
+| `USER_MISSING` / empty `printf` | Set `SORGER_*` in profile `.env`; restart worker; skill registers passthrough |
 | `SORGER_*` empty in `terminal` | Set in profile `.env` or gateway env; ensure skill is loaded (registers passthrough) |
 | `excluded` lists O/M only; `eligible` all `[]` | Inverted or wrong page — re-read rules; use Speisen page; O/M → eligible |
 | A/G dishes still in numbered list | Re-run `partition_allergens.py`; never hand-bucket; Moussaka/Paprikasuppe with G → excluded only |
