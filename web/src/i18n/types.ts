@@ -225,6 +225,7 @@ export interface Translations {
     confirmDeleteMessage: string;
     confirmDeleteTitle: string;
     newJob: string;
+    editJob: string;
     nameOptional: string;
     namePlaceholder: string;
     prompt: string;

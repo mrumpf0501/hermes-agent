@@ -205,6 +205,7 @@ export const af: Translations = {
       "Dit verwyder die taak van die skedule. Dit kan nie ongedaan gemaak word nie.",
     confirmDeleteTitle: "Skrap geskeduleerde taak?",
     newJob: "Nuwe Cron-taak",
+    editJob: "Wysig Cron-taak",
     nameOptional: "Naam (opsioneel)",
     namePlaceholder: "bv. Daaglikse opsomming",
     prompt: "Opdrag",
