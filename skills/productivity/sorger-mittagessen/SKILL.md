@@ -4,10 +4,11 @@ description: >-
   Logs into Sorger Mittagessen (mittagessen.sorgerbrot.at), picks a date on the
   dish-selection page, lists allergen-safe options (no A/G), asks gateway users
   to confirm pre-order, then logs in again to order via per-row **+** buttons
-  (multi-dish allowed), submits via qty field **1** + Enter, and verifies the save banner.
+  (multi-dish allowed), submits via qty field **1** + Enter; completes only after the
+  green top banner „Die Bestellung für … wurde gespeichert.“
   Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.2.0
+version: 1.2.1
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -322,6 +323,31 @@ Only after verification → [Login and consent](#login-and-consent) submit seque
 3. After every step: `browser_snapshot()`; do not claim login (or order) success if
    the page is unchanged.
 
+## CRITICAL — Vorbestellung: only the green save banner counts
+
+A Sorger **Vorbestellung is not saved** until the site shows a **light-green banner at
+the very top** of the Speisen page (above **„Meine Bestellungen“**) with text of the form:
+
+```text
+Die Bestellung für Montag, 08.06.2026 wurde gespeichert.
+```
+
+(Weekday and date vary; the sentence structure is fixed.)
+
+| Agent assumption | Reality |
+|------------------|---------|
+| Quantity fields show **`1`** | Order may **not** be stored yet |
+| **`+`** clicked, Enter pressed | Submit may have failed silently |
+| Still on **„Meine Bestellungen“** / dish list | Normal page **after** save — **not** proof without the banner |
+| User would see the order if they log in manually | **False** until the banner appeared in **your** snapshot |
+
+**Never** `kanban_complete` with `ordered: true` or tell the user „vorbestellt“ unless the
+**latest** `browser_snapshot()` after submit contains **`Die Bestellung für`** and
+**`wurde gespeichert`** in that top banner (copy the full line into the ticket).
+
+If the banner is missing: retry submit (qty **`1`** + Enter, then bottom button), snapshot
+again. If still missing: `kanban_block` — order **failed**, not done.
+
 ---
 
 ## Dish selection page and date
@@ -355,7 +381,7 @@ If the date control is not in the snapshot, try `browser_snapshot(full=true)` or
 | Phase | Goal | Task state |
 |-------|------|------------|
 | **A — Scout** | Login, pick date, list safe options | Comment + metadata; **block** awaiting user |
-| **B — Order** | User chose one or more options; login, `+` per row, qty **`1`** + Enter | **Complete** after success banner |
+| **B — Order** | User chose one or more options; login, `+` per row, qty **`1`** + Enter | **Complete** only after green top banner |
 
 Same browser sequence in both phases: Datenschutz → Login → (Phase A: read menu;
 Phase B: **`+`** per chosen row → click qty field **`1`** + **Enter** → verify save banner).
@@ -507,10 +533,11 @@ Default **`qty`: 1** per choice unless the user asked for more of the same optio
 4. For **each** resolved choice, set quantity on **that dish’s row** via **`+`** (below).
 5. **Submit the order** via the quantity field + **Enter** (below) — after the **last**
    selected row shows **`1`**.
-6. `browser_snapshot()` — verify the **success banner** at the top (below).
+6. `browser_snapshot()` — **hard gate:** green top banner **„Die Bestellung für … wurde
+   gespeichert.“** (see CRITICAL section). No banner → **not** ordered.
 
 Do **not** click only the dish title. Do **not** submit until every selected row shows
-the required quantity.
+the required quantity. Do **not** complete the task because rows show **`1`** alone.
 
 #### Quantity: always use the **`+` button** (never type into the field)
 
@@ -562,64 +589,89 @@ If there is still no **„Die Bestellung für … wurde gespeichert“** banner:
    **`browser_click`** on that button, then **Enter** again.
 3. `browser_snapshot()` — re-check the top banner.
 
-#### Success verification (required)
+#### Success verification (hard gate — required before `kanban_complete`)
 
-The order succeeded only if the snapshot shows a message **at the top** of the page
-like:
+**This is the only success signal.** Without it, the order does **not** exist in Sorger
+(manual login will show **no** lunch order for that day).
+
+After submit, take a fresh `browser_snapshot()` and confirm **all** of the following:
+
+1. **Placement:** A **light-green** status strip at the **top** of the viewport (above the
+   **„Meine Bestellungen“** heading), not only a row qty of **`1`**.
+2. **Exact phrase (both parts required):**
+   - starts with **`Die Bestellung für`**
+   - ends with **`wurde gespeichert.`** (period optional)
+3. **Copy the full banner line** from the snapshot into `metadata.sorger.verification`
+   and the closing `kanban_comment` (verbatim — do not paraphrase).
+
+Canonical examples from the live site (any of these formats count):
 
 ```text
-Die Bestellung für <Datum> wurde gespeichert.
+Die Bestellung für Montag, 08.06.2026 wurde gespeichert.
+Die Bestellung für Mo 08.06.2026 wurde gespeichert.
+Die Bestellung für 08.06.2026 wurde gespeichert.
 ```
 
-Examples that count (date format may vary):
+The weekday/date segment should match Phase A `date_label` / `date_iso` when readable.
+If the banner names a **different** calendar day → treat as **failure** (wrong date tab).
 
-- `Die Bestellung für Mo 08.06.2026 wurde gespeichert.`
-- `Die Bestellung für 08.06.2026 wurde gespeichert.`
+**Does not count as success (common false positives):**
 
-Rules:
+- Dish rows show quantity **`1`** but **no** green top banner
+- Page title **„Meine Bestellungen“** visible without the save sentence
+- You pressed Enter or clicked submit once — **no banner yet**
+- Assuming the user will see the order when they log in — verify **in the browser first**
+- Summarizing „Vorbestellt“ in `kanban_complete` without pasting the banner line from snapshot
 
-- Match **`Die Bestellung für`** + **`wurde gespeichert`** (minor punctuation OK).
-- The `<Datum>` segment should correspond to Phase A `date_label` / `date_iso` when
-  readable — if it clearly references a **different** day, treat as failure.
-- No banner → order **not** verified; retry submit or `kanban_block` with snapshot excerpt.
-- Do **not** `kanban_complete` on generic “Meine Bestellungen” navigation alone without
-  this save confirmation text.
+**If the banner is missing:**
+
+1. Retry: last row qty field **`1`** → **Enter**; snapshot again.
+2. Fallback: bottom **Bestellen** / **Vorbestellen** / **Speichern** + snapshot.
+3. Still missing → `kanban_block(reason="Sorger — Vorbestellung nicht gespeichert (kein Banner „… wurde gespeichert“)", …)` with snapshot excerpt; **`ordered: false`** or omit complete.
+
+**Only then** call `kanban_complete` with `ordered: true`.
 
 ### 3. Save and confirm on the ticket
 
 ```python
+# Run ONLY after snapshot shows the green top banner (hard gate above).
 kanban_complete(
-    summary="Sorger vorbestellt: <n> Gericht(e) am <date_label> (ohne A/G).",
+    summary="Sorger vorbestellt: <n> Gericht(e) am <date_label> — <exact banner line>",
     metadata={
         "site": "mittagessen.sorgerbrot.at",
         "sorger": {
-            "date_iso": "2026-06-03",
-            "date_label": "Di 03.06.2026",
+            "date_iso": "2026-06-08",
+            "date_label": "Mo 08.06.2026",
             "ordered": True,
             "dishes": [
                 {"option": 2, "name": "…", "allergens": ["O"], "qty": 1},
-                {"option": 4, "name": "…", "allergens": [], "qty": 1},
             ],
             "allergen_policy": {"exclude": ["A", "G"]},
-            "verification": "Die Bestellung für … wurde gespeichert.",
+            "verification": "Die Bestellung für Montag, 08.06.2026 wurde gespeichert.",
         },
     },
 )
 ```
 
+`metadata.sorger.verification` must be the **exact** banner text from the snapshot, not
+a template or guess.
+
 Add a final `kanban_comment` listing every ordered dish with allergens, e.g.:
 
 ```text
-✓ Vorbestellt am Di 03.06.2026:
+✓ Vorbestellt (Sorger-Bestätigung):
+Die Bestellung für Montag, 08.06.2026 wurde gespeichert.
+
+Gerichte:
 - Chili con Carne — Allergene: O
-- Kunterbunter Salat — Allergene: keine
-Bestätigung: Die Bestellung für Di 03.06.2026 wurde gespeichert.
 ```
 
-On **gateway**, send the same summary via `send_message` to the Phase A target.
+On **gateway**, `send_message` must include the **same banner line** — not „Bestellung
+erfolgt“ without the Sorger save text.
 
-If order failed after user approval: `kanban_block` with specifics; do not
-`kanban_complete` until the save banner is visible or the user accepts abort.
+If order failed after user approval: `kanban_block` with specifics; do **not**
+`kanban_complete` with `ordered: true` until the green banner is in the snapshot or the
+user explicitly accepts abort (`ordered: false`).
 
 ---
 
@@ -657,7 +709,9 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 - Submitting only via the bottom button **without** trying qty field **`1`** + **Enter** first
 - Pressing Enter before every selected row shows **`1`**
 - Using `browser_type` to **set** quantity (use **`+`**); confusing that with submit click on **`1`**
-- `kanban_complete` without top banner **„Die Bestellung für … wurde gespeichert“**
+- `kanban_complete` / „vorbestellt“ without green top banner **„Die Bestellung für … wurde gespeichert.“**
+- Telling the user the order is done when manual login would show **no** order (banner never verified)
+- `verification` in metadata that is a placeholder (`…`) instead of snapshot copy
 - Only ordering one dish when the user selected **multiple** options
 - Putting dishes with **only** O/M/other codes in `excluded_dishes` (only **A/G** go there)
 - Putting dishes with **A** or **G** in `eligible_dishes` (e.g. **Salat Hendl** `A C`, **Brokkolicremesuppe** `G O`)
@@ -694,8 +748,10 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | A/G dishes still in numbered list | Re-run `partition_allergens.py`; never hand-bucket; Moussaka/Paprikasuppe with G → excluded only |
 | JSON has G in `eligible_dishes` | Script skipped — any `allergens` with G or A must not be in eligible; re-partition |
 | Order “done” but row still `0` | Click **`+`** on that row (not `browser_type`), verify `1`, then qty field + **Enter** |
-| No save banner after submit | Click last row’s qty field showing `1`, **Enter**; then bottom button / `requestSubmit` |
+| Agent said vorbestellt, manual login empty | False complete — banner was never in snapshot; re-run Phase B; never `ordered: true` without banner |
+| No save banner after submit | Click last row’s qty field showing `1`, **Enter**; then bottom button / `requestSubmit`; snapshot top |
 | Enter did nothing | Snapshot: all chosen rows at `1`? Focus correct field (between −/+), not dish title |
+| Rows at `1`, no green strip | Not saved — need top text „Die Bestellung für … wurde gespeichert.“ |
 | Typed `1` but UI ignored it | Use **`+`** only; re-verify row shows `1` |
 
 ---
