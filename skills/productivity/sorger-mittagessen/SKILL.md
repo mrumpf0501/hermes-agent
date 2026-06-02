@@ -7,7 +7,7 @@ description: >-
   (multi-dish allowed), submits at page bottom, and verifies the save banner.
   Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.7
+version: 1.1.8
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -257,12 +257,37 @@ Replace the placeholders with the real values from `printenv` / `printf` — not
 
 ## Login and consent
 
-1. Datenschutz checkbox ≠ login submit — accept privacy, then fill credentials
-   (above), then submit.
-2. Submit login: button → `browser_press("Enter")` → `form.requestSubmit()` in
-   `browser_console`.
-3. After every step: `browser_snapshot()`; do not claim login or order success if
-   the page unchanged.
+1. Datenschutz checkbox ≠ login submit — accept privacy (click/checkbox), then fill
+   credentials (above).
+2. **Submit login** — after both fields are filled, use this order (snapshot after
+   each step; stop when the page changes away from the login form):
+
+   **A. `form.requestSubmit()` first** (preferred — do not click the button yet):
+
+   ```javascript
+   (() => {
+     const p = document.querySelector('input[type="password"]');
+     const form = p && p.closest('form');
+     if (!form) return 'no form';
+     if (typeof form.requestSubmit === 'function') form.requestSubmit();
+     else form.submit();
+     return 'requestSubmit';
+   })()
+   ```
+
+   Run via `browser_console` on the login page (same `task_id`).
+
+   **B. Only if still on login** — `browser_click` on the visible login submit button
+   (e.g. **Anmelden**, **Login**, **Einloggen**). Find its ref from `browser_snapshot`.
+
+   **C. Only if A and B failed** — `browser_press(key="Enter")` while focus is in the
+   password field.
+
+   Do **not** click the login button before trying **A**. Do **not** skip **A** and
+   go straight to the button.
+
+3. After every step: `browser_snapshot()`; do not claim login (or order) success if
+   the page is unchanged.
 
 ---
 
@@ -596,6 +621,7 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 - Assuming gateway users saw options without `send_message` or a clear comment list
 - Wrong Kanban board (`schlummerpost`)
 - `curl` / `web_extract` instead of browser for login and order
+- Login: clicking **Anmelden** before `form.requestSubmit()` — always **requestSubmit** first
 
 ---
 
@@ -606,7 +632,7 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | Menu empty after date change | Reselect date; snapshot; check weekend/holiday |
 | User reply not visible | `kanban_show`; ensure user used comment or unblock path |
 | Blocked but user answered | Orchestrator/user: `/kanban comment t_… "2"` then `/kanban unblock t_…` |
-| Same page after login | Re-snapshot; Enter / `requestSubmit` |
+| Same page after login | `requestSubmit` first, then login button click, then Enter; snapshot each step |
 | `send_message` fails | `action=list`; use `Notify:` from body; rely on block notifier + comment |
 | Login fields show `$SORGER_USER` | Used `browser_type` with shell syntax — use `terminal` + real strings (see above) |
 | `SORGER_*` empty in `terminal` | Set in profile `.env` or gateway env; ensure skill is loaded (registers passthrough) |
