@@ -205,6 +205,7 @@ export const de: Translations = {
       "Damit wird die Aufgabe aus dem Zeitplan entfernt. Dies kann nicht rückgängig gemacht werden.",
     confirmDeleteTitle: "Geplante Aufgabe löschen?",
     newJob: "Neue Cron-Aufgabe",
+    editJob: "Cron-Aufgabe bearbeiten",
     nameOptional: "Name (optional)",
     namePlaceholder: "z. B. Tägliche Zusammenfassung",
     prompt: "Prompt",

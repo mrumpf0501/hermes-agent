@@ -205,6 +205,7 @@ export const fr: Translations = {
       "Cela supprime la tâche du planning. Cette action est irréversible.",
     confirmDeleteTitle: "Supprimer la tâche planifiée ?",
     newJob: "Nouvelle tâche cron",
+    editJob: "Modifier la tâche cron",
     nameOptional: "Nom (facultatif)",
     namePlaceholder: "ex. Résumé quotidien",
     prompt: "Invite",

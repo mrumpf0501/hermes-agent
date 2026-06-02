@@ -205,6 +205,7 @@ export const es: Translations = {
       "Esto elimina la tarea de la programación. No se puede deshacer.",
     confirmDeleteTitle: "¿Eliminar tarea programada?",
     newJob: "Nueva tarea Cron",
+    editJob: "Editar tarea Cron",
     nameOptional: "Nombre (opcional)",
     namePlaceholder: "p. ej. Resumen diario",
     prompt: "Prompt",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Clock, Pause, Play, Trash2, X, Zap } from "lucide-react";
+import { Clock, Pause, Pencil, Play, Trash2, X, Zap } from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Select, SelectOption } from "@nous-research/ui/ui/components/select";
@@ -66,6 +66,17 @@ function getJobScheduleDisplay(job: CronJob): string {
   );
 }
 
+/** Value for the schedule input when creating or editing a job. */
+function getScheduleInput(job?: CronJob | null): string {
+  if (!job) return "";
+  const expr = asText(job.schedule?.expr);
+  if (expr) return expr;
+  const display = asText(job.schedule?.display);
+  if (display) return display;
+  const shown = asText(job.schedule_display);
+  return shown === "—" ? "" : shown;
+}
+
 function getJobState(job: CronJob): string {
   return asText(job.state) || (job.enabled === false ? "disabled" : "scheduled");
 }
@@ -105,19 +116,48 @@ export default function CronPage() {
   const { t } = useI18n();
   const { setEnd } = usePageHeader();
 
-  // New job modal state
-  const [createModalOpen, setCreateModalOpen] = useState(false);
+  type CronModalMode = "create" | "edit";
+  const [modalMode, setModalMode] = useState<CronModalMode | null>(null);
+  const [editingJob, setEditingJob] = useState<CronJob | null>(null);
   const [prompt, setPrompt] = useState("");
   const [schedule, setSchedule] = useState("");
   const [name, setName] = useState("");
-  const closeCreateModal = useCallback(() => setCreateModalOpen(false), []);
-  const createModalRef = useModalBehavior({
-    open: createModalOpen,
-    onClose: closeCreateModal,
-  });
   const [deliver, setDeliver] = useState("local");
-  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const closeJobModal = useCallback(() => {
+    setModalMode(null);
+    setEditingJob(null);
+  }, []);
+  const jobModalRef = useModalBehavior({
+    open: modalMode !== null,
+    onClose: closeJobModal,
+  });
+
   const createProfile = selectedProfile === "all" ? "default" : selectedProfile;
+  const isEditing = modalMode === "edit" && editingJob !== null;
+
+  const resetForm = useCallback(() => {
+    setPrompt("");
+    setSchedule("");
+    setName("");
+    setDeliver("local");
+    setEditingJob(null);
+  }, []);
+
+  const openCreateModal = useCallback(() => {
+    resetForm();
+    setModalMode("create");
+  }, [resetForm]);
+
+  const openEditModal = useCallback((job: CronJob) => {
+    setEditingJob(job);
+    setName(getJobName(job));
+    setPrompt(getJobPrompt(job));
+    setSchedule(getScheduleInput(job));
+    setDeliver(asText(job.deliver) || "local");
+    setModalMode("edit");
+  }, []);
 
   const loadJobs = useCallback(() => {
     api
@@ -138,33 +178,45 @@ export default function CronPage() {
     loadJobs();
   }, [loadJobs]);
 
-  const handleCreate = async () => {
+  const handleSaveJob = async () => {
     if (!prompt.trim() || !schedule.trim()) {
       showToast(`${t.cron.prompt} & ${t.cron.schedule} required`, "error");
       return;
     }
-    setCreating(true);
+    setSaving(true);
     try {
-      await api.createCronJob(
-        {
-          prompt: prompt.trim(),
-          schedule: schedule.trim(),
-          name: name.trim() || undefined,
-          deliver,
-        },
-        createProfile,
-      );
-      showToast(t.common.create + " ✓", "success");
-      setPrompt("");
-      setSchedule("");
-      setName("");
-      setDeliver("local");
-      setCreateModalOpen(false);
+      if (isEditing && editingJob) {
+        const profile = getJobProfile(editingJob);
+        await api.updateCronJob(
+          editingJob.id,
+          {
+            prompt: prompt.trim(),
+            schedule: schedule.trim(),
+            name: name.trim(),
+            deliver,
+          },
+          profile,
+        );
+        showToast(`${t.common.save} ✓`, "success");
+      } else {
+        await api.createCronJob(
+          {
+            prompt: prompt.trim(),
+            schedule: schedule.trim(),
+            name: name.trim() || undefined,
+            deliver,
+          },
+          createProfile,
+        );
+        showToast(t.common.create + " ✓", "success");
+      }
+      resetForm();
+      setModalMode(null);
       loadJobs();
     } catch (e) {
       showToast(`${t.config.failedToSave}: ${e}`, "error");
     } finally {
-      setCreating(false);
+      setSaving(false);
     }
   };
 
@@ -231,7 +283,7 @@ export default function CronPage() {
       <Button
         className="uppercase"
         size="sm"
-        onClick={() => setCreateModalOpen(true)}
+        onClick={openCreateModal}
       >
         {t.common.create}
       </Button>,
@@ -273,50 +325,59 @@ export default function CronPage() {
         loading={jobDelete.isDeleting}
       />
 
-      {/* Create job modal */}
-      {createModalOpen && (
+      {/* Create / edit job modal */}
+      {modalMode !== null && (
         <div
-          ref={createModalRef}
+          ref={jobModalRef}
           className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm p-4"
-          onClick={(e) => e.target === e.currentTarget && setCreateModalOpen(false)}
+          onClick={(e) => e.target === e.currentTarget && closeJobModal()}
           role="dialog"
           aria-modal="true"
-          aria-labelledby="create-cron-title"
+          aria-labelledby="cron-job-modal-title"
         >
           <div className={cn(themedBody, "relative w-full max-w-lg border border-border bg-card shadow-2xl flex flex-col")}>
             <Button
               ghost
               size="icon"
-              onClick={() => setCreateModalOpen(false)}
+              onClick={closeJobModal}
               className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              aria-label="Close"
+              aria-label={t.common.close}
             >
               <X />
             </Button>
 
             <header className="p-5 pb-3 border-b border-border">
               <h2
-                id="create-cron-title"
+                id="cron-job-modal-title"
                 className="font-mondwest text-display text-base tracking-wider"
               >
-                {t.cron.newJob}
+                {isEditing ? t.cron.editJob : t.cron.newJob}
               </h2>
             </header>
 
             <div className="p-5 grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="cron-profile">Profile</Label>
-                <Select
-                  id="cron-profile"
-                  value={createProfile}
-                  onValueChange={(v) => setSelectedProfile(v)}
-                >
-                  {profiles.map((profile) => (
-                    <SelectOption key={profile.name} value={profile.name}>
-                      {profileLabel(profile.name)}
-                    </SelectOption>
-                  ))}
-                </Select>
+                {isEditing && editingJob ? (
+                  <p
+                    id="cron-profile"
+                    className="text-sm font-mono text-muted-foreground border border-border bg-background/40 px-3 py-2"
+                  >
+                    {profileLabel(getJobProfile(editingJob))}
+                  </p>
+                ) : (
+                  <Select
+                    id="cron-profile"
+                    value={createProfile}
+                    onValueChange={(v) => setSelectedProfile(v)}
+                  >
+                    {profiles.map((profile) => (
+                      <SelectOption key={profile.name} value={profile.name}>
+                        {profileLabel(profile.name)}
+                      </SelectOption>
+                    ))}
+                  </Select>
+                )}
               </div>
 
               <div className="grid gap-2">
@@ -378,15 +439,28 @@ export default function CronPage() {
                 </div>
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <Button
+                  ghost
+                  className="uppercase"
+                  size="sm"
+                  onClick={closeJobModal}
+                  disabled={saving}
+                >
+                  {t.common.cancel}
+                </Button>
                 <Button
                   className="uppercase"
                   size="sm"
-                  onClick={handleCreate}
-                  disabled={creating}
-                  prefix={creating ? <Spinner /> : undefined}
+                  onClick={handleSaveJob}
+                  disabled={saving}
+                  prefix={saving ? <Spinner /> : undefined}
                 >
-                  {creating ? t.common.creating : t.common.create}
+                  {saving
+                    ? t.common.saving
+                    : isEditing
+                      ? t.common.save
+                      : t.common.create}
                 </Button>
               </div>
             </div>
@@ -476,6 +550,16 @@ export default function CronPage() {
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    ghost
+                    size="icon"
+                    title={t.cron.editJob}
+                    aria-label={t.cron.editJob}
+                    onClick={() => openEditModal(job)}
+                  >
+                    <Pencil />
+                  </Button>
+
                   <Button
                     ghost
                     size="icon"

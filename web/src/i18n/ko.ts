@@ -205,6 +205,7 @@ export const ko: Translations = {
       "이 작업은 일정에서 작업을 제거합니다. 되돌릴 수 없습니다.",
     confirmDeleteTitle: "예약된 작업을 삭제하시겠습니까?",
     newJob: "새 Cron 작업",
+    editJob: "Cron 작업 편집",
     nameOptional: "이름 (선택 사항)",
     namePlaceholder: "예: 일일 요약",
     prompt: "프롬프트",

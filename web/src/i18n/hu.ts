@@ -205,6 +205,7 @@ export const hu: Translations = {
       "Ez eltávolítja a feladatot az ütemezésből. A művelet nem vonható vissza.",
     confirmDeleteTitle: "Törli az ütemezett feladatot?",
     newJob: "Új Cron-feladat",
+    editJob: "Cron-feladat szerkesztése",
     nameOptional: "Név (opcionális)",
     namePlaceholder: "pl. Napi összegzés",
     prompt: "Prompt",

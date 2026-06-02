@@ -205,6 +205,7 @@ export const zhHant: Translations = {
       "將從排程移除此任務，此操作無法復原。",
     confirmDeleteTitle: "刪除排程任務？",
     newJob: "新增排程任務",
+    editJob: "編輯排程任務",
     nameOptional: "名稱（選填）",
     namePlaceholder: "例如：每日摘要",
     prompt: "提示詞",

@@ -205,6 +205,7 @@ export const en: Translations = {
       "This removes the job from the schedule. This cannot be undone.",
     confirmDeleteTitle: "Delete scheduled job?",
     newJob: "New Cron Job",
+    editJob: "Edit Cron Job",
     nameOptional: "Name (optional)",
     namePlaceholder: "e.g. Daily summary",
     prompt: "Prompt",

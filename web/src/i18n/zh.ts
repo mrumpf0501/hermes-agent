@@ -202,6 +202,7 @@ export const zh: Translations = {
     confirmDeleteMessage: "将从此计划移除该任务，此操作无法撤销。",
     confirmDeleteTitle: "删除定时任务？",
     newJob: "新建定时任务",
+    editJob: "编辑定时任务",
     nameOptional: "名称（可选）",
     namePlaceholder: "例如：每日总结",
     prompt: "提示词",

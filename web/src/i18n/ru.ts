@@ -205,6 +205,7 @@ export const ru: Translations = {
       "Это удалит задачу из расписания. Действие нельзя отменить.",
     confirmDeleteTitle: "Удалить запланированную задачу?",
     newJob: "Новая Cron-задача",
+    editJob: "Редактировать Cron-задачу",
     nameOptional: "Имя (необязательно)",
     namePlaceholder: "напр. Ежедневная сводка",
     prompt: "Запрос",
