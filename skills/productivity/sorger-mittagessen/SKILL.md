@@ -6,7 +6,7 @@ description: >-
   to confirm pre-order, then logs in again to place the order and records the
   result on the Kanban task. Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.5
+version: 1.1.6
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -118,6 +118,36 @@ For each dish on the menu for the chosen date:
 5. **Never** exclude only for O, M, C, etc. **Never** offer a dish whose `codes`
    includes **A** or **G**.
 
+### Mandatory: run `partition_allergens.py` (do not hand-bucket)
+
+Models often parse `allergens` correctly but still put **G** dishes in
+`eligible_dishes` (e.g. Süßkartoffel-Moussaka `["G","O"]`, Paprikasuppe mit Chili
+`["G","O"]` listed as „Bestellbar“). **Always** partition with the bundled script
+after you have every dish’s `name` + `allergens` from the page:
+
+1. Build a JSON array of **all** dishes (eligible-looking and excluded-looking —
+   one flat list):
+
+```json
+{"dishes": [
+  {"name": "Süßkartoffel-Moussaka …", "allergens": ["G", "O"]},
+  {"name": "Kunterbunter Salat", "allergens": []},
+  {"name": "Chili con Carne …", "allergens": ["O"]}
+]}
+```
+
+2. Pipe through the script (from repo root or skill path):
+
+```
+terminal(command='cd <hermes-agent-root> && printf \'%s\' \'{"dishes":[...]}\' | python3 skills/productivity/sorger-mittagessen/scripts/partition_allergens.py')
+```
+
+3. Use **only** the script’s `eligible_dishes` / `excluded_dishes` in `sorger-menu`
+   and in the human comment. **Ignore** any prior hand-sorted buckets.
+
+4. If any `eligible_dishes[].allergens` contains `A` or `G`, the script was not
+   used or input was wrong — fix before `kanban_block`.
+
 Wrong (inverts policy — do not do this):
 
 ```json
@@ -133,13 +163,13 @@ Correct:
 
 ### Before `kanban_comment` (self-check)
 
-- Re-scan every **`eligible_dishes`** row: if the card shows badge **A** or **G**
-  → move to `excluded_dishes` (e.g. **Salat Hendl** + A; **Brokkolicremesuppe** + G).
-- Grep the numbered human comment for known bad names (**Salat Hendl**,
-  **Brokkolicremesuppe**) or for `— Allergene: …` lines that include **A** or **G**.
-- Every `excluded_dishes[].allergens` must include **A or G**. If not → move to `eligible_dishes`.
-- Every `eligible_dishes[].allergens` must **not** contain `"A"` or `"G"`.
-- `reason` in `excluded_dishes` must mention **A or G**, never only O/M/C/other.
+- Confirm you ran **`partition_allergens.py`** — not manual sorting into buckets.
+- Every **`eligible_dishes[].allergens`** must **not** contain `"A"` or `"G"`.
+  Example failures: option 1 with `["G","O"]`, option 8 Paprikasuppe with `["G","O"]`
+  under „Bestellbar“ — both belong in **`excluded_dishes`** only.
+- Grep the numbered human comment: no line under „Bestellbar“ may show
+  `Allergene: … G` or `… A` (e.g. `— Allergene: G, O` is **excluded**, not offered).
+- Every `excluded_dishes[].allergens` must include **A or G**; `reason` must cite A/G.
 - If any eligible row has `allergens: []` but you never saw `Allergene:` for that
   card, do **not** publish — snapshot/vision again.
 
@@ -547,7 +577,8 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | Login fields show `$SORGER_USER` | Used `browser_type` with shell syntax — use `terminal` + real strings (see above) |
 | `SORGER_*` empty in `terminal` | Set in profile `.env` or gateway env; ensure skill is loaded (registers passthrough) |
 | `excluded` lists O/M only; `eligible` all `[]` | Inverted or wrong page — re-read rules; use Speisen page; O/M → eligible |
-| A/G dishes still in numbered list | Re-read `Allergene:` per card; Salat Hendl (A), Brokkolicremesuppe (G) → excluded; fix comment |
+| A/G dishes still in numbered list | Re-run `partition_allergens.py`; never hand-bucket; Moussaka/Paprikasuppe with G → excluded only |
+| JSON has G in `eligible_dishes` | Script skipped — any `allergens` with G or A must not be in eligible; re-partition |
 | Order “done” but row still `0` | Set quantity field to `1` on chosen row, then submit form again |
 
 ---
