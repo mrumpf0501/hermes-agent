@@ -11,6 +11,7 @@ Usage:
 
 import asyncio
 import hmac
+import re
 import importlib.util
 import json
 import logging
@@ -2834,6 +2835,15 @@ class ProfileSoulUpdate(BaseModel):
     content: str
 
 
+class ProfileSkillInstall(BaseModel):
+    identifier: str
+
+
+class ProfileSkillCopy(BaseModel):
+    from_profile: str
+    skill: str
+
+
 def _profile_attr(info, name: str, default: Any = None) -> Any:
     try:
         return getattr(info, name)
@@ -2903,6 +2913,154 @@ def _resolve_profile_dir(name: str) -> Path:
     if not profiles_mod.profile_exists(name):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' does not exist.")
     return profiles_mod.get_profile_dir(name)
+
+
+def _resolve_profile_skill_dir(skills_dir: Path, skill_ref: str) -> Optional[Path]:
+    """Resolve a skill reference (``category/name`` or bare ``name``) to its directory."""
+    from agent.skill_utils import is_excluded_skill_path
+
+    skill_ref = (skill_ref or "").strip().strip("/")
+    if not skill_ref or not skills_dir.is_dir():
+        return None
+
+    direct = skills_dir / Path(skill_ref)
+    if (direct / "SKILL.md").is_file():
+        return direct
+
+    target_name = skill_ref.split("/")[-1]
+    matches: list[Path] = []
+    for md in skills_dir.rglob("SKILL.md"):
+        if is_excluded_skill_path(md):
+            continue
+        if md.parent.name == target_name:
+            matches.append(md.parent)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _collect_profile_skills(profile_dir: Path) -> List[Dict[str, Any]]:
+    """List installed skills for a profile (filesystem scan)."""
+    from agent.skill_utils import is_excluded_skill_path
+
+    skills_dir = profile_dir / "skills"
+    if not skills_dir.is_dir():
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for md in sorted(skills_dir.rglob("SKILL.md")):
+        if is_excluded_skill_path(md):
+            continue
+        skill_dir = md.parent
+        try:
+            rel = md.relative_to(skills_dir)
+        except ValueError:
+            continue
+        parts = rel.parts[:-1]
+        if not parts:
+            continue
+        if len(parts) == 1:
+            skill_id = parts[0]
+        else:
+            skill_id = f"{parts[0]}/{parts[-1]}"
+        if skill_id in seen:
+            continue
+        seen.add(skill_id)
+        description = ""
+        try:
+            text = md.read_text(encoding="utf-8")[:4000]
+            if text.startswith("---"):
+                end = text.find("\n---", 3)
+                if end != -1:
+                    m = re.search(r"^description:\s*(.+)$", text[3:end], re.MULTILINE)
+                    if m:
+                        description = m.group(1).strip().strip("\"'")
+        except OSError:
+            pass
+        entries.append({
+            "id": skill_id,
+            "name": parts[-1],
+            "category": parts[0] if len(parts) > 1 else parts[0],
+            "description": description,
+        })
+    return sorted(entries, key=lambda e: (e.get("category") or "", e.get("name") or ""))
+
+
+def _copy_skill_between_profiles(
+    target_dir: Path,
+    source_dir: Path,
+    skill_ref: str,
+) -> Path:
+    """Copy one skill directory from *source_dir* into *target_dir*."""
+    import shutil
+
+    source_skills = source_dir / "skills"
+    target_skills = target_dir / "skills"
+    src_path = _resolve_profile_skill_dir(source_skills, skill_ref)
+    if src_path is None:
+        raise ValueError(f"Skill '{skill_ref}' not found in source profile.")
+
+    try:
+        rel = src_path.relative_to(source_skills)
+    except ValueError as exc:
+        raise ValueError(f"Invalid skill path for '{skill_ref}'.") from exc
+
+    dest = target_skills / rel
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_path, dest)
+    return dest
+
+
+def _hub_install_skill_for_profile(profile_dir: Path, identifier: str) -> Tuple[bool, str]:
+    """Install a hub skill into a profile via an isolated subprocess."""
+    identifier = (identifier or "").strip()
+    if not identifier:
+        return False, "Skill identifier is required."
+
+    script = (
+        "import os, sys\n"
+        "from io import StringIO\n"
+        "os.environ['HERMES_HOME'] = sys.argv[1]\n"
+        "identifier = sys.argv[2]\n"
+        "from rich.console import Console\n"
+        "from hermes_cli.skills_hub import do_install\n"
+        "buf = StringIO()\n"
+        "console = Console(file=buf, force_terminal=False, width=120)\n"
+        "try:\n"
+        "    do_install(identifier, force=True, skip_confirm=True, console=console)\n"
+        "except Exception as exc:\n"
+        "    print(f'ERROR: {exc}')\n"
+        "    raise SystemExit(1) from exc\n"
+        "out = buf.getvalue()\n"
+        "if 'Installed:' in out:\n"
+        "    print('OK')\n"
+        "    raise SystemExit(0)\n"
+        "print(out.strip() or 'Installation failed')\n"
+        "raise SystemExit(1)\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(profile_dir), identifier],
+            env={**os.environ, "HERMES_HOME": str(profile_dir)},
+            capture_output=True,
+            text=True,
+            timeout=180,
+            cwd=str(PROJECT_ROOT),
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Skill installation timed out (180s)."
+    except OSError as exc:
+        return False, f"Could not run installer: {exc}"
+
+    if result.returncode == 0:
+        return True, f"Installed skill for profile."
+    detail = (result.stdout or result.stderr or "").strip()
+    if len(detail) > 500:
+        detail = detail[-500:]
+    return False, detail or "Skill installation failed."
 
 
 def _profile_setup_command(name: str) -> str:
@@ -3064,6 +3222,68 @@ async def update_profile_soul(name: str, body: ProfileSoulUpdate):
         _log.exception("PUT /api/profiles/%s/soul failed", name)
         raise HTTPException(status_code=500, detail=f"Could not write SOUL.md: {e}")
     return {"ok": True}
+
+
+@app.get("/api/profiles/{name}/skills")
+async def list_profile_skills(name: str):
+    profile_dir = _resolve_profile_dir(name)
+    skills = _collect_profile_skills(profile_dir)
+    return {"skills": skills, "count": len(skills)}
+
+
+@app.post("/api/profiles/{name}/skills/install")
+async def install_profile_skill(name: str, body: ProfileSkillInstall):
+    profile_dir = _resolve_profile_dir(name)
+    ok, message = _hub_install_skill_for_profile(profile_dir, body.identifier)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    skills = _collect_profile_skills(profile_dir)
+    return {
+        "ok": True,
+        "message": message,
+        "skills": skills,
+        "skill_count": len(skills),
+    }
+
+
+@app.post("/api/profiles/{name}/skills/copy")
+async def copy_profile_skill(name: str, body: ProfileSkillCopy):
+    from hermes_cli import profiles as profiles_mod
+
+    target_dir = _resolve_profile_dir(name)
+    source_name = (body.from_profile or "").strip() or "default"
+    try:
+        profiles_mod.validate_profile_name(source_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not profiles_mod.profile_exists(source_name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source profile '{source_name}' does not exist.",
+        )
+    if source_name == name:
+        raise HTTPException(
+            status_code=400,
+            detail="Source and target profile must differ.",
+        )
+    source_dir = profiles_mod.get_profile_dir(source_name)
+    skill_ref = (body.skill or "").strip()
+    if not skill_ref:
+        raise HTTPException(status_code=400, detail="Skill name is required.")
+    try:
+        dest = _copy_skill_between_profiles(target_dir, source_dir, skill_ref)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        _log.exception("POST /api/profiles/%s/skills/copy failed", name)
+        raise HTTPException(status_code=500, detail=str(e))
+    skills = _collect_profile_skills(target_dir)
+    return {
+        "ok": True,
+        "path": str(dest),
+        "skills": skills,
+        "skill_count": len(skills),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   ChevronDown,
+  Package,
   Pencil,
   Terminal,
   Trash2,
@@ -16,7 +17,7 @@ import {
 import spinners from "unicode-animations";
 import { H2 } from "@nous-research/ui/ui/components/typography/h2";
 import { api } from "@/lib/api";
-import type { ProfileInfo } from "@/lib/api";
+import type { ProfileInfo, ProfileSkillEntry } from "@/lib/api";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
 import { useConfirmDelete } from "@nous-research/ui/hooks/use-confirm-delete";
@@ -95,6 +96,22 @@ export default function ProfilesPage() {
   // newer state when the user switches profiles or closes the editor.
   const activeSoulRequest = useRef<string | null>(null);
 
+  // Inline skills editor state
+  const [editingSkillsFor, setEditingSkillsFor] = useState<string | null>(
+    null,
+  );
+  const [profileSkills, setProfileSkills] = useState<ProfileSkillEntry[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [hubIdentifier, setHubIdentifier] = useState("");
+  const [skillInstalling, setSkillInstalling] = useState(false);
+  const [copyFromProfile, setCopyFromProfile] = useState("default");
+  const [copySkillId, setCopySkillId] = useState("");
+  const [sourceProfileSkills, setSourceProfileSkills] = useState<
+    ProfileSkillEntry[]
+  >([]);
+  const [skillCopying, setSkillCopying] = useState(false);
+  const activeSkillsRequest = useRef<string | null>(null);
+
   const load = useCallback(() => {
     api
       .getProfiles()
@@ -164,6 +181,10 @@ export default function ProfilesPage() {
         setEditingSoulFor(null);
         return;
       }
+      if (editingSkillsFor) {
+        activeSkillsRequest.current = null;
+        setEditingSkillsFor(null);
+      }
       setEditingSoulFor(name);
       setSoulText("");
       activeSoulRequest.current = name;
@@ -178,7 +199,7 @@ export default function ProfilesPage() {
         }
       }
     },
-    [editingSoulFor, showToast, t.status.error],
+    [editingSoulFor, editingSkillsFor, showToast, t.status.error],
   );
 
   const handleSaveSoul = async (name: string) => {
@@ -191,6 +212,115 @@ export default function ProfilesPage() {
     } finally {
       setSoulSaving(false);
     }
+  };
+
+  const loadSourceProfileSkills = useCallback(
+    async (sourceName: string) => {
+      try {
+        const res = await api.getProfileSkills(sourceName);
+        setSourceProfileSkills(res.skills);
+        if (res.skills.length > 0) {
+          setCopySkillId((prev) =>
+            res.skills.some((s) => s.id === prev) ? prev : res.skills[0].id,
+          );
+        } else {
+          setCopySkillId("");
+        }
+      } catch {
+        setSourceProfileSkills([]);
+        setCopySkillId("");
+      }
+    },
+    [],
+  );
+
+  const openSkillsEditor = useCallback(
+    async (name: string) => {
+      if (editingSkillsFor === name) {
+        activeSkillsRequest.current = null;
+        setEditingSkillsFor(null);
+        return;
+      }
+      if (editingSoulFor) {
+        activeSoulRequest.current = null;
+        setEditingSoulFor(null);
+      }
+      setEditingSkillsFor(name);
+      setProfileSkills([]);
+      setHubIdentifier("");
+      setSkillsLoading(true);
+      activeSkillsRequest.current = name;
+      const others = profiles.filter((p) => p.name !== name);
+      const defaultSource =
+        others.find((p) => p.name === "default")?.name ?? others[0]?.name ?? "";
+      setCopyFromProfile(defaultSource);
+      try {
+        const res = await api.getProfileSkills(name);
+        if (activeSkillsRequest.current === name) {
+          setProfileSkills(res.skills);
+        }
+        if (defaultSource) {
+          await loadSourceProfileSkills(defaultSource);
+        }
+      } catch (e) {
+        if (activeSkillsRequest.current === name) {
+          showToast(`${t.status.error}: ${e}`, "error");
+        }
+      } finally {
+        if (activeSkillsRequest.current === name) {
+          setSkillsLoading(false);
+        }
+      }
+    },
+    [
+      editingSkillsFor,
+      editingSoulFor,
+      profiles,
+      loadSourceProfileSkills,
+      showToast,
+      t.status.error,
+    ],
+  );
+
+  const handleInstallSkill = async (profileName: string) => {
+    const identifier = hubIdentifier.trim();
+    if (!identifier) return;
+    setSkillInstalling(true);
+    try {
+      const res = await api.installProfileSkill(profileName, identifier);
+      setProfileSkills(res.skills);
+      setHubIdentifier("");
+      showToast(t.profiles.skillInstalled, "success");
+      load();
+    } catch (e) {
+      showToast(`${t.status.error}: ${e}`, "error");
+    } finally {
+      setSkillInstalling(false);
+    }
+  };
+
+  const handleCopySkill = async (profileName: string) => {
+    if (!copyFromProfile || !copySkillId) return;
+    setSkillCopying(true);
+    try {
+      const res = await api.copyProfileSkill(
+        profileName,
+        copyFromProfile,
+        copySkillId,
+      );
+      setProfileSkills(res.skills);
+      showToast(t.profiles.skillCopied, "success");
+      load();
+    } catch (e) {
+      showToast(`${t.status.error}: ${e}`, "error");
+    } finally {
+      setSkillCopying(false);
+    }
+  };
+
+  const handleCopySourceChange = async (sourceName: string) => {
+    setCopyFromProfile(sourceName);
+    await loadSourceProfileSkills(sourceName);
   };
 
   const handleCopyTerminalCommand = async (name: string) => {
@@ -382,6 +512,8 @@ export default function ProfilesPage() {
         {profiles.map((p) => {
           const isRenaming = renamingFrom === p.name;
           const isEditingSoul = editingSoulFor === p.name;
+          const isEditingSkills = editingSkillsFor === p.name;
+          const otherProfiles = profiles.filter((x) => x.name !== p.name);
           return (
             <Card key={p.name}>
               <CardContent className="flex items-start gap-4 py-4">
@@ -472,6 +604,19 @@ export default function ProfilesPage() {
                       <Button
                         ghost
                         size="icon"
+                        title={t.profiles.editSkills}
+                        aria-label={t.profiles.editSkills}
+                        onClick={() => openSkillsEditor(p.name)}
+                      >
+                        {isEditingSkills ? (
+                          <ChevronDown className="h-4 w-4" />
+                        ) : (
+                          <Package className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        ghost
+                        size="icon"
                         title={t.profiles.editSoul}
                         aria-label={t.profiles.editSoul}
                         onClick={() => openSoulEditor(p.name)}
@@ -522,6 +667,133 @@ export default function ProfilesPage() {
                   )}
                 </div>
               </CardContent>
+
+              {isEditingSkills && (
+                <div className="border-t border-border px-4 pb-4 pt-3 flex flex-col gap-4">
+                  <Label className="flex items-center gap-2 font-mondwest text-display text-xs tracking-wider text-muted-foreground">
+                    {t.profiles.skillsSection}
+                  </Label>
+
+                  {skillsLoading ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t.profiles.loadingSkills}
+                    </p>
+                  ) : (
+                    <>
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-2">
+                          {t.profiles.installedSkills}
+                        </p>
+                        {profileSkills.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            {t.profiles.noInstalledSkills}
+                          </p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {profileSkills.map((s) => (
+                              <Badge key={s.id} tone="secondary" title={s.description}>
+                                {s.id}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          {t.profiles.addFromHub}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Input
+                            className="flex-1 min-w-[12rem]"
+                            placeholder={t.profiles.hubIdentifierPlaceholder}
+                            value={hubIdentifier}
+                            onChange={(e) => setHubIdentifier(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleInstallSkill(p.name);
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            className="uppercase"
+                            disabled={skillInstalling || !hubIdentifier.trim()}
+                            onClick={() => handleInstallSkill(p.name)}
+                          >
+                            {skillInstalling
+                              ? t.common.saving
+                              : t.profiles.installSkill}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {otherProfiles.length > 0 && (
+                        <div className="flex flex-col gap-2">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            {t.profiles.copyFromProfile}
+                          </p>
+                          <div className="flex flex-wrap gap-2 items-end">
+                            <div className="flex flex-col gap-1 min-w-[8rem]">
+                              <Label htmlFor={`copy-from-${p.name}`} className="text-xs">
+                                {t.profiles.sourceProfile}
+                              </Label>
+                              <select
+                                id={`copy-from-${p.name}`}
+                                className="h-9 border border-input bg-transparent px-2 text-sm"
+                                value={copyFromProfile}
+                                onChange={(e) =>
+                                  handleCopySourceChange(e.target.value)
+                                }
+                              >
+                                {otherProfiles.map((op) => (
+                                  <option key={op.name} value={op.name}>
+                                    {op.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex flex-col gap-1 flex-1 min-w-[10rem]">
+                              <Label htmlFor={`copy-skill-${p.name}`} className="text-xs">
+                                {t.profiles.skillToCopy}
+                              </Label>
+                              <select
+                                id={`copy-skill-${p.name}`}
+                                className="h-9 border border-input bg-transparent px-2 text-sm"
+                                value={copySkillId}
+                                onChange={(e) => setCopySkillId(e.target.value)}
+                                disabled={sourceProfileSkills.length === 0}
+                              >
+                                {sourceProfileSkills.length === 0 ? (
+                                  <option value="">—</option>
+                                ) : (
+                                  sourceProfileSkills.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.id}
+                                    </option>
+                                  ))
+                                )}
+                              </select>
+                            </div>
+                            <Button
+                              size="sm"
+                              className="uppercase"
+                              disabled={
+                                skillCopying ||
+                                !copySkillId ||
+                                !copyFromProfile
+                              }
+                              onClick={() => handleCopySkill(p.name)}
+                            >
+                              {skillCopying
+                                ? t.common.saving
+                                : t.profiles.copySkill}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
 
               {isEditingSoul && (
                 <div className="border-t border-border px-4 pb-4 pt-3 flex flex-col gap-2">

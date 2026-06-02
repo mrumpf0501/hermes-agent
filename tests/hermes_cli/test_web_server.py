@@ -735,6 +735,33 @@ class TestNewEndpoints:
         profiles = {p["name"]: p for p in self.client.get("/api/profiles").json()["profiles"]}
         assert profiles["fresh"]["skill_count"] == 1
 
+    def test_profile_skills_list_and_copy(self, monkeypatch):
+        from hermes_constants import get_hermes_home
+
+        target = get_hermes_home() / "profiles" / "target"
+        source = get_hermes_home() / "profiles" / "source"
+        skill_dir = source / "skills" / "productivity" / "demo-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: demo-skill\ndescription: Demo\n---\n",
+            encoding="utf-8",
+        )
+        target.mkdir(parents=True)
+
+        list_resp = self.client.get("/api/profiles/source/skills")
+        assert list_resp.status_code == 200
+        skills = list_resp.json()["skills"]
+        assert any(s["id"] == "productivity/demo-skill" for s in skills)
+
+        copy_resp = self.client.post(
+            "/api/profiles/target/skills/copy",
+            json={"from_profile": "source", "skill": "productivity/demo-skill"},
+        )
+        assert copy_resp.status_code == 200
+        copied = target / "skills" / "productivity" / "demo-skill" / "SKILL.md"
+        assert copied.exists()
+        assert copy_resp.json()["skill_count"] >= 1
+
     def test_profile_open_terminal_uses_macos_terminal(self, monkeypatch):
         from hermes_constants import get_hermes_home
         import hermes_cli.web_server as web_server

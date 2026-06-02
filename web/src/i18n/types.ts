@@ -317,6 +317,20 @@ export interface Translations {
     created: string;
     deleted: string;
     renamed: string;
+    editSkills: string;
+    skillsSection: string;
+    installedSkills: string;
+    noInstalledSkills: string;
+    addFromHub: string;
+    hubIdentifierPlaceholder: string;
+    installSkill: string;
+    copyFromProfile: string;
+    sourceProfile: string;
+    skillToCopy: string;
+    copySkill: string;
+    skillInstalled: string;
+    skillCopied: string;
+    loadingSkills: string;
   };
 
   // ── Skills page ──

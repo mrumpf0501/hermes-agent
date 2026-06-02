@@ -358,6 +358,36 @@ export const api = {
         body: JSON.stringify({ content }),
       },
     ),
+  getProfileSkills: (name: string) =>
+    fetchJSON<{ skills: ProfileSkillEntry[]; count: number }>(
+      `/api/profiles/${encodeURIComponent(name)}/skills`,
+    ),
+  installProfileSkill: (name: string, identifier: string) =>
+    fetchJSON<{
+      ok: boolean;
+      message: string;
+      skills: ProfileSkillEntry[];
+      skill_count: number;
+    }>(`/api/profiles/${encodeURIComponent(name)}/skills/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier }),
+    }),
+  copyProfileSkill: (
+    name: string,
+    fromProfile: string,
+    skill: string,
+  ) =>
+    fetchJSON<{
+      ok: boolean;
+      path: string;
+      skills: ProfileSkillEntry[];
+      skill_count: number;
+    }>(`/api/profiles/${encodeURIComponent(name)}/skills/copy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_profile: fromProfile, skill }),
+    }),
 
   // Skills & Toolsets
   getSkills: () => fetchJSON<SkillInfo[]>("/api/skills"),
@@ -707,6 +737,13 @@ export interface ProfileInfo {
   provider: string | null;
   has_env: boolean;
   skill_count: number;
+}
+
+export interface ProfileSkillEntry {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
 }
 
 export interface ModelsAnalyticsModelEntry {
