@@ -3,10 +3,11 @@ name: sorger-mittagessen
 description: >-
   Logs into Sorger Mittagessen (mittagessen.sorgerbrot.at), picks a date on the
   dish-selection page, lists allergen-safe options (no A/G), asks gateway users
-  to confirm pre-order, then logs in again to place the order and records the
-  result on the Kanban task. Use for Sorger, Sorgerbrot, Mittagessen, lunch
+  to confirm pre-order, then logs in again to order via per-row **+** buttons
+  (multi-dish allowed), submits at page bottom, and verifies the save banner.
+  Use for Sorger, Sorgerbrot, Mittagessen, lunch
   mail, or Telegram/email tasks about ordering.
-version: 1.1.6
+version: 1.1.7
 platforms: [linux, macos, windows]
 required_environment_variables:
   - name: SORGER_USER
@@ -296,10 +297,10 @@ If the date control is not in the snapshot, try `browser_snapshot(full=true)` or
 | Phase | Goal | Task state |
 |-------|------|------------|
 | **A — Scout** | Login, pick date, list safe options | Comment + metadata; **block** awaiting user |
-| **B — Order** | User chose an option; login, select dish, confirm order | **Complete** with final metadata + comment |
+| **B — Order** | User chose one or more options; login, `+` per row, submit at page end | **Complete** after success banner |
 
 Same browser sequence in both phases: Datenschutz → Login → (Phase A: read menu;
-Phase B: select dish + submit order).
+Phase B: **`+`** per chosen row → bottom submit → verify save banner).
 
 Detect Phase B when:
 
@@ -357,8 +358,8 @@ Nicht angeboten (enthält A oder G):
 - Brokkolicremesuppe — Allergene: G, O (ausgeschlossen: G)
 - Weizennudeln — Allergene: A, G (ausgeschlossen: A, G)
 
-Antwort mit Nummer (z. B. 1), „ja 2“, oder exaktem Gerichtename.
-Oder: „nein“ / „keine Vorbestellung“.
+Antwort mit einer oder mehreren Nummern (z. B. `2`, `1 und 3`, `2,4`), exakten
+Gerichtenamen, oder „nein“ / „keine Vorbestellung“. Mehrfachauswahl ist erlaubt.
 ```
 
 Format rules for the human comment:
@@ -394,7 +395,7 @@ For gateway-origin tasks **always**:
 
 ```python
 kanban_block(
-    reason="awaiting-user: Sorger Mittagessen — Vorbestellung? Optionen im Task-Kommentar (1–N oder nein)",
+    reason="awaiting-user: Sorger Mittagessen — Vorbestellung? Option(en) im Kommentar (1–N, mehrere möglich, oder nein)",
 )
 ```
 
@@ -403,7 +404,7 @@ The gateway notifier also delivers a **blocked** event to subscribed chats; the
 
 **Non-gateway** (cron, dashboard, CLI only): still save menu in comments/metadata;
 block with the same `awaiting-user` prefix unless the task body says
-`auto_order: <name>` or `wahl: 2` — then skip approval and run Phase B in one run.
+`auto_order: <name>` or `wahl: 2` / `wahl: 1,3` — then skip approval and run Phase B in one run.
 
 ### 3. If no eligible dishes
 
@@ -415,108 +416,137 @@ Dishes with only O/M/other allergens still count as eligible — that is not “
 
 ## Phase B — Order: user choice → pre-order → ticket
 
-### 1. Parse the user's choice
+### 1. Parse the user's choice (single or multiple)
 
-Read `kanban_show` → `comments` (newest first). Map to an `eligible_dishes` entry:
+Read `kanban_show` → `comments` (newest first) and the Phase A `sorger-menu` payload.
+Build a list **`choices`** — one entry per selected dish from `eligible_dishes` only.
 
 | User says | Match |
 |-----------|--------|
-| `1`, `Option 1`, `Nr. 1` | `option: 1` |
-| `ja, 2`, `bitte 2` | `option: 2` |
-| exact dish name | `name` (case-insensitive) |
+| `1`, `Option 1`, `Nr. 1` | one choice: `option: 1` |
+| `1 und 3`, `1,3`, `ja 2 und 4` | multiple options (split on `,`, `und`, `&`, spaces) |
+| `2x 1` / `zweimal 3` | same option twice → click **`+` twice** on that row (qty 2) |
+| exact dish name | `name` (case-insensitive); multiple names if separated by `,` / `und` |
 | `nein`, `keine`, `abbrechen` | Cancel — `kanban_complete` with `ordered: false` |
 
-If ambiguous, `kanban_block(reason="awaiting-user: Sorger — bitte Option 1–N oder Gerichtename")`
+Reject any option that maps to `excluded_dishes` or has **A/G** in `allergens`.
+If ambiguous, `kanban_block(reason="awaiting-user: Sorger — bitte Option 1–N (mehrere möglich) oder nein")`
 and one clarifying `send_message` on gateway.
 
-Store the resolved choice in a comment:
+Store the resolved choices in a comment:
 
 ```python
-kanban_comment(body='sorger-choice: {"option": 2, "name": "…"}')
+kanban_comment(body='sorger-choice: {"choices": [{"option": 2, "name": "…", "qty": 1}, {"option": 4, "name": "…", "qty": 1}]}')
 ```
 
-### 2. Browser pre-order (same flow as before)
+Default **`qty`: 1** per choice unless the user asked for more of the same option.
+
+### 2. Browser pre-order
 
 1. `browser_navigate` → Datenschutz → Login (submit rules above).
 2. Open **„Bitte wählen Sie die Speisen aus, die Sie gerne hätten.“**
 3. Select the **same date** as Phase A (`date_iso` / `date_label` from comments).
-4. On the **chosen dish’s card/row**, set quantity **1** (see below) — do not stop
-   at clicking the dish name alone.
-5. **Submit the order form** for the whole page (see below) — not only the quantity row.
-6. `browser_snapshot()` — verify confirmation text or “bestellt” / order summary.
+4. For **each** resolved choice, set quantity on **that dish’s row** via **`+`** (below).
+5. At the **bottom of the page**, click the order **submit** button (below).
+6. `browser_snapshot()` — verify the **success banner** at the top (below).
 
-#### Quantity: `1` in the field between `−` and `+`
+Do **not** click only the dish title. Do **not** submit until every selected row shows
+the required quantity.
+
+#### Quantity: always use the **`+` button** (never type into the field)
 
 Each dish row/card has a quantity control on the right:
 
 ```text
 [ − ]   0   [ + ]
-        ↑
-   number field (often shows 0 before ordering)
+        ↑       ↑ use this — do NOT browser_type "1" into the middle
+   read-only or display field
 ```
 
-For the **user-selected dish only**:
+For **each** dish in `sorger-choice.choices`:
 
-1. `browser_snapshot()` — find the **quantity input** on **that dish’s row** (between
-   the minus and plus buttons). It may be a `spinbutton`, `textbox`, or numeric input.
-2. Set the value to **`1`**:
-   - Prefer `browser_type(ref="@e…", text="1")` on that field (clears/replaces like fill), or
-   - `browser_click` the field, then `browser_type` `1`, or
-   - One `browser_click` on **`+`** only if the snapshot proves `0` → `1` and the
-     field is not directly typable.
-3. `browser_snapshot()` — confirm **that row** shows **`1`**, not `0`. Other dishes
-   may stay at `0`.
+1. `browser_snapshot()` — locate the **`+` button** on **that dish’s row** (same row as
+   the dish name). Identify its ref (e.g. `@e12`).
+2. Click **`+` once per portion** (default 1× `+` → quantity **1**; for `qty: 2` click
+   **`+` twice**, snapshot between clicks if the UI only increments by one).
+3. **Do not** use `browser_type` on the number field to enter `1` — Sorger expects
+   UI interaction via **`+`** / **`−`**, not typed text.
+4. `browser_snapshot()` — verify **that row** displays **`1`** (or the target qty).
+   Unselected rows may stay at **`0`**.
+5. Repeat for the next chosen dish until all choices are set.
 
-Do **not** `kanban_complete` if the chosen row still shows `0`.
+Do **not** `kanban_complete` if any selected row still shows **`0`** when it should be **`1`**.
 
-#### Submit the order form
+#### Submit at the page bottom
 
-After quantity is **1** for the chosen dish:
+After every selected row shows the correct quantity:
 
-1. `browser_snapshot()` — locate the page’s **order submit** control (e.g.
-   **Bestellen**, **Vorbestellen**, **Speichern**, **Weiter**, or a form submit button).
-2. Submit using the same rules as login:
-   - **A.** `browser_click` on the submit button ref
-   - **B.** `browser_press(key="Enter")` if focus is in the form
-   - **C.** `browser_console` → `form.requestSubmit()` if A/B fail
-3. `browser_snapshot()` — page must change (confirmation, “Meine Bestellungen”, or
-   success message). Unchanged page = order **not** done; retry or `kanban_block`.
+1. `browser_snapshot(full=true)` if needed — scroll mentally to the **page end**
+   (footer area below all dish rows).
+2. Find the **submit** control at the **bottom** of the Speisen page (label varies:
+   e.g. **Bestellen**, **Vorbestellen**, **Speichern** — not the per-row `+` buttons).
+3. `browser_click` on that bottom submit button (same fallback chain as login:
+   Enter / `form.requestSubmit()` only if click fails).
+4. `browser_snapshot()` — look at the **top** of the page for the confirmation line.
+
+#### Success verification (required)
+
+The order succeeded only if the snapshot shows a message **at the top** of the page
+like:
+
+```text
+Die Bestellung für <Datum> wurde gespeichert.
+```
+
+Examples that count (date format may vary):
+
+- `Die Bestellung für Mo 08.06.2026 wurde gespeichert.`
+- `Die Bestellung für 08.06.2026 wurde gespeichert.`
+
+Rules:
+
+- Match **`Die Bestellung für`** + **`wurde gespeichert`** (minor punctuation OK).
+- The `<Datum>` segment should correspond to Phase A `date_label` / `date_iso` when
+  readable — if it clearly references a **different** day, treat as failure.
+- No banner → order **not** verified; retry submit or `kanban_block` with snapshot excerpt.
+- Do **not** `kanban_complete` on generic “Meine Bestellungen” navigation alone without
+  this save confirmation text.
 
 ### 3. Save and confirm on the ticket
 
 ```python
 kanban_complete(
-    summary="Sorger vorbestellt: <name> am <date_label> (ohne A/G).",
+    summary="Sorger vorbestellt: <n> Gericht(e) am <date_label> (ohne A/G).",
     metadata={
         "site": "mittagessen.sorgerbrot.at",
         "sorger": {
             "date_iso": "2026-06-03",
+            "date_label": "Di 03.06.2026",
             "ordered": True,
-            "dish": {"option": 2, "name": "…", "allergens": ["O"]},
+            "dishes": [
+                {"option": 2, "name": "…", "allergens": ["O"], "qty": 1},
+                {"option": 4, "name": "…", "allergens": [], "qty": 1},
+            ],
             "allergen_policy": {"exclude": ["A", "G"]},
-            "verification": "confirmation snapshot: …",
+            "verification": "Die Bestellung für … wurde gespeichert.",
         },
     },
 )
 ```
 
-Add a final `kanban_comment` with allergens on the ordered dish, e.g.:
+Add a final `kanban_comment` listing every ordered dish with allergens, e.g.:
 
 ```text
-✓ Vorbestellt: Chili con Carne — Allergene: O — am Di 03.06.2026
+✓ Vorbestellt am Di 03.06.2026:
+- Chili con Carne — Allergene: O
+- Kunterbunter Salat — Allergene: keine
+Bestätigung: Die Bestellung für Di 03.06.2026 wurde gespeichert.
 ```
 
-On **gateway**, send confirmation:
-
-```text
-✓ Sorger vorbestellt: Chili con Carne — Allergene: O — am Di 03.06.2026 (Task t_…)
-```
-
-Use `send_message` to the same target as Phase A. Subscribers also receive the
-gateway **completed** notifier with your summary line.
+On **gateway**, send the same summary via `send_message` to the Phase A target.
 
 If order failed after user approval: `kanban_block` with specifics; do not
-`kanban_complete` until verified or user accepts abort.
+`kanban_complete` until the save banner is visible or the user accepts abort.
 
 ---
 
@@ -540,16 +570,20 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 1. Board **`default`**, skill **`sorger-mittagessen`**, browser + send_message on profile.
 2. Mail subject/body → task title/body with target date.
 3. Default path: Phase A → user approval → Phase B after `unblock` + comment.
-4. Fully unattended only when body includes explicit `auto_order:` or `wahl:`.
+4. Fully unattended only when body includes explicit `auto_order:` or `wahl:` (single or multiple).
 
 ---
 
 ## Anti-patterns
 
 - Selecting a dish before choosing the date on the Speisen-auswählen page
-- Clicking only the dish title without setting quantity **`1`** between `−` and `+`
-- Leaving quantity at **`0`** and submitting the form
-- Submitting before the chosen row shows **`1`**
+- Typing **`1`** into the quantity field (`browser_type`) instead of clicking **`+`**
+- Clicking only the dish title without **`+`** on that row
+- Leaving any **selected** row at **`0`** and submitting
+- Submitting before every selected row shows **`1`** (or requested qty)
+- Submitting via a control that is not the **bottom-of-page** order button
+- `kanban_complete` without top banner **„Die Bestellung für … wurde gespeichert“**
+- Only ordering one dish when the user selected **multiple** options
 - Putting dishes with **only** O/M/other codes in `excluded_dishes` (only **A/G** go there)
 - Putting dishes with **A** or **G** in `eligible_dishes` (e.g. **Salat Hendl** `A C`, **Brokkolicremesuppe** `G O`)
 - Treating **G** badge as safe because only **A** was remembered
@@ -579,7 +613,9 @@ auto-subscribes the originating chat when `Notify:` is omitted.
 | `excluded` lists O/M only; `eligible` all `[]` | Inverted or wrong page — re-read rules; use Speisen page; O/M → eligible |
 | A/G dishes still in numbered list | Re-run `partition_allergens.py`; never hand-bucket; Moussaka/Paprikasuppe with G → excluded only |
 | JSON has G in `eligible_dishes` | Script skipped — any `allergens` with G or A must not be in eligible; re-partition |
-| Order “done” but row still `0` | Set quantity field to `1` on chosen row, then submit form again |
+| Order “done” but row still `0` | Click **`+`** on that row (not `browser_type`), verify `1`, then bottom submit |
+| No save banner after submit | Retry bottom submit; snapshot top — need „Die Bestellung für … wurde gespeichert“ |
+| Typed `1` but UI ignored it | Use **`+`** only; re-verify row shows `1` |
 
 ---
 
