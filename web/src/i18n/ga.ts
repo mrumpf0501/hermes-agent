@@ -205,7 +205,6 @@ export const ga: Translations = {
       "Baineann sé seo an post ón sceideal. Ní féidir é seo a chealú.",
     confirmDeleteTitle: "Scrios an post sceidealta?",
     newJob: "Post Cron Nua",
-    editJob: "Cuir Post Cron in Eagar",
     nameOptional: "Ainm (roghnach)",
     namePlaceholder: "m.sh. Achoimre laethúil",
     prompt: "Prompt",

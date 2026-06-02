@@ -587,42 +587,6 @@ class TestNewEndpoints:
         resp = self.client.get("/api/cron/jobs/nonexistent-id")
         assert resp.status_code == 404
 
-    def test_cron_create_and_update(self):
-        created = self.client.post(
-            "/api/cron/jobs?profile=default",
-            json={
-                "prompt": "ping",
-                "schedule": "0 9 * * *",
-                "name": "test-update-ui",
-                "deliver": "local",
-            },
-        )
-        assert created.status_code == 200
-        job = created.json()
-        job_id = job["id"]
-
-        updated = self.client.put(
-            f"/api/cron/jobs/{job_id}?profile=default",
-            json={
-                "updates": {
-                    "prompt": "pong",
-                    "schedule": "30 10 * * *",
-                    "name": "test-update-ui-renamed",
-                    "deliver": "email",
-                },
-            },
-        )
-        assert updated.status_code == 200
-        body = updated.json()
-        assert body["prompt"] == "pong"
-        assert body["name"] == "test-update-ui-renamed"
-        assert body["deliver"] == "email"
-
-        deleted = self.client.delete(
-            f"/api/cron/jobs/{job_id}?profile=default",
-        )
-        assert deleted.status_code == 200
-
     # --- Profiles ---
 
     def test_profiles_list_includes_default(self):

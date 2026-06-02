@@ -4848,8 +4848,6 @@ def start_server(
     """Start the web UI server."""
     import uvicorn
 
-    _log.info("Dashboard SPA static files: %s", WEB_DIST)
-
     global _DASHBOARD_EMBEDDED_CHAT_ENABLED
     _DASHBOARD_EMBEDDED_CHAT_ENABLED = embedded_chat
 

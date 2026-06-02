@@ -205,7 +205,6 @@ export const pt: Translations = {
       "Esta ação remove a tarefa do agendamento. Não é possível anular.",
     confirmDeleteTitle: "Eliminar tarefa agendada?",
     newJob: "Nova tarefa cron",
-    editJob: "Editar tarefa cron",
     nameOptional: "Nome (opcional)",
     namePlaceholder: "ex: Resumo diário",
     prompt: "Prompt",

@@ -205,7 +205,6 @@ export const it: Translations = {
       "Questa operazione rimuove l'attività dalla pianificazione. Non può essere annullata.",
     confirmDeleteTitle: "Eliminare l'attività pianificata?",
     newJob: "Nuova attività cron",
-    editJob: "Modifica attività cron",
     nameOptional: "Nome (facoltativo)",
     namePlaceholder: "es. Riepilogo giornaliero",
     prompt: "Prompt",

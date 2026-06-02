@@ -205,7 +205,6 @@ export const tr: Translations = {
       "Bu, görevi zamanlamadan kaldırır. Bu işlem geri alınamaz.",
     confirmDeleteTitle: "Zamanlanmış görev silinsin mi?",
     newJob: "Yeni Cron Görevi",
-    editJob: "Cron Görevini Düzenle",
     nameOptional: "Ad (isteğe bağlı)",
     namePlaceholder: "örn. Günlük özet",
     prompt: "İstem",

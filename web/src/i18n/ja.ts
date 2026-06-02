@@ -205,7 +205,6 @@ export const ja: Translations = {
       "ジョブをスケジュールから削除します。この操作は取り消せません。",
     confirmDeleteTitle: "スケジュールされたジョブを削除しますか？",
     newJob: "新しい Cron ジョブ",
-    editJob: "Cron ジョブを編集",
     nameOptional: "名前 (任意)",
     namePlaceholder: "例: 日次サマリー",
     prompt: "プロンプト",

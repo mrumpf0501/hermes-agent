@@ -205,7 +205,6 @@ export const uk: Translations = {
       "Це видаляє завдання з розкладу. Цю дію не можна скасувати.",
     confirmDeleteTitle: "Видалити заплановане завдання?",
     newJob: "Нове Cron-завдання",
-    editJob: "Редагувати Cron-завдання",
     nameOptional: "Назва (необов'язково)",
     namePlaceholder: "напр. Щоденне зведення",
     prompt: "Запит",
