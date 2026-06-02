@@ -6719,33 +6719,32 @@ def _run_npm_install_deterministic(
     )
 
 
-def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
+def _build_web_ui(web_dir: Path, *, fatal: bool = False, force: bool = False) -> bool:
     """Build the web UI frontend if npm is available.
 
     Args:
         web_dir: Path to the ``web/`` source directory.
         fatal: If True, print error guidance and return False on failure
                instead of a soft warning (used by ``hermes web``).
+        force: If True, run ``npm run build`` even when the dist sentinel
+               looks fresh (``hermes dashboard --rebuild``).
 
     Returns True if the build succeeded or was skipped (no package.json).
     """
     if not (web_dir / "package.json").exists():
         return True
 
-    if not _web_ui_build_needed(web_dir):
-        return True
-
-    # Console-encoding-safe print: Windows consoles default to cp1252
-    # (or similar) and will raise UnicodeEncodeError on arrow / check
-    # glyphs unless PYTHONIOENCODING=utf-8 is set. Routing every print
-    # in this function through _say() with errors="replace" keeps the
-    # build path usable on a stock `py -m hermes_cli.main web` invocation.
     def _say(text: str) -> None:
         try:
             print(text)
         except UnicodeEncodeError:
             encoding = getattr(sys.stdout, "encoding", None) or "ascii"
             print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
+    dist_dir = web_dir.parent / "hermes_cli" / "web_dist"
+    if not force and not _web_ui_build_needed(web_dir):
+        _say(f"→ Web UI bundle up to date ({dist_dir})")
+        return True
 
     npm = shutil.which("npm")
     if not npm:
@@ -11082,7 +11081,11 @@ def cmd_dashboard(args):
         sys.exit(1)
 
     if "HERMES_WEB_DIST" not in os.environ and not getattr(args, "skip_build", False):
-        if not _build_web_ui(PROJECT_ROOT / "web", fatal=True):
+        if not _build_web_ui(
+            PROJECT_ROOT / "web",
+            fatal=True,
+            force=getattr(args, "rebuild", False),
+        ):
             sys.exit(1)
     elif getattr(args, "skip_build", False):
         # --skip-build trusts the caller to have pre-built the web UI.
@@ -14369,6 +14372,14 @@ Examples:
         help=(
             "Expose the in-browser Chat tab (embedded `hermes --tui` via PTY/WebSocket). "
             "Alternatively set HERMES_DASHBOARD_TUI=1."
+        ),
+    )
+    dashboard_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help=(
+            "Force a fresh Vite build into hermes_cli/web_dist/ before starting "
+            "(use after git pull when the Cron UI or other dashboard pages look stale)"
         ),
     )
     dashboard_parser.add_argument(
