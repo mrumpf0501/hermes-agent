@@ -79,6 +79,92 @@ class CostResult:
 
 _UTC_NOW = lambda: datetime.now(timezone.utc)
 
+_GOOGLE_PRICING_URL = "https://ai.google.dev/gemini-api/docs/pricing"
+_GOOGLE_PRICING_VERSION = "google-pricing-2026-05-31"
+_GOOGLE_PROVIDER_ALIASES = frozenset({"gemini", "google-gemini-cli", "google"})
+_GEMINI_DATED_SUFFIX = re.compile(r"-\d{2}-\d{4}$")
+
+
+def _google_pricing_entry(
+    input_m: str,
+    output_m: str,
+    *,
+    cache_read_m: Optional[str] = None,
+) -> PricingEntry:
+    return PricingEntry(
+        input_cost_per_million=Decimal(input_m),
+        output_cost_per_million=Decimal(output_m),
+        cache_read_cost_per_million=Decimal(cache_read_m) if cache_read_m is not None else None,
+        source="official_docs_snapshot",
+        source_url=_GOOGLE_PRICING_URL,
+        pricing_version=_GOOGLE_PRICING_VERSION,
+    )
+
+
+# Standard-tier Gemini API prices (text/image/video unless noted).
+# Source: https://ai.google.dev/gemini-api/docs/pricing (May 2026 snapshot).
+_GOOGLE_GEMINI_PRICING: Dict[str, PricingEntry] = {
+    # ── Gemini 3.5 ───────────────────────────────────────────────────────
+    "gemini-3.5-flash": _google_pricing_entry("1.50", "9.00", cache_read_m="0.15"),
+    "gemini-3.5-live-translate-preview": _google_pricing_entry("3.50", "21.00"),
+    # ── Gemini 3.1 ───────────────────────────────────────────────────────
+    "gemini-3.1-flash-lite": _google_pricing_entry("0.25", "1.50", cache_read_m="0.025"),
+    "gemini-3.1-flash-lite-preview": _google_pricing_entry("0.25", "1.50", cache_read_m="0.025"),
+    "gemini-3.1-pro-preview": _google_pricing_entry("2.00", "12.00", cache_read_m="0.20"),
+    "gemini-3.1-pro-preview-customtools": _google_pricing_entry("2.00", "12.00", cache_read_m="0.20"),
+    "gemini-3.1-pro": _google_pricing_entry("2.00", "12.00", cache_read_m="0.20"),
+    "gemini-3.1-flash-live-preview": _google_pricing_entry("0.75", "4.50"),
+    "gemini-3.1-flash-image": _google_pricing_entry("0.50", "3.00"),
+    "gemini-3.1-flash-tts-preview": _google_pricing_entry("1.00", "20.00"),
+    # ── Gemini 3 ───────────────────────────────────────────────────────────
+    "gemini-3-flash-preview": _google_pricing_entry("0.50", "3.00", cache_read_m="0.05"),
+    "gemini-3-flash": _google_pricing_entry("0.50", "3.00", cache_read_m="0.05"),
+    "gemini-3-pro-preview": _google_pricing_entry("2.00", "12.00", cache_read_m="0.20"),
+    "gemini-3-pro": _google_pricing_entry("2.00", "12.00", cache_read_m="0.20"),
+    "gemini-3-pro-image": _google_pricing_entry("2.00", "12.00"),
+    # ── Gemini 2.5 ───────────────────────────────────────────────────────
+    "gemini-2.5-pro": _google_pricing_entry("1.25", "10.00", cache_read_m="0.125"),
+    "gemini-2.5-flash": _google_pricing_entry("0.30", "2.50", cache_read_m="0.03"),
+    "gemini-2.5-flash-lite": _google_pricing_entry("0.10", "0.40", cache_read_m="0.01"),
+    "gemini-2.5-flash-lite-preview": _google_pricing_entry("0.10", "0.40", cache_read_m="0.01"),
+    "gemini-2.5-flash-lite-preview-09-2025": _google_pricing_entry("0.10", "0.40", cache_read_m="0.01"),
+    "gemini-2.5-flash-native-audio-preview-12-2025": _google_pricing_entry("0.50", "2.00"),
+    "gemini-2.5-flash-image": _google_pricing_entry("0.30", "2.50"),
+    "gemini-2.5-flash-preview-tts": _google_pricing_entry("0.50", "10.00"),
+    "gemini-2.5-pro-preview-tts": _google_pricing_entry("1.00", "20.00"),
+    "gemini-2.5-computer-use-preview-10-2025": _google_pricing_entry("1.25", "10.00"),
+    # ── Gemini 2.0 (deprecated but still billed in historical sessions) ──
+    "gemini-2.0-flash": _google_pricing_entry("0.10", "0.40", cache_read_m="0.025"),
+    "gemini-2.0-flash-lite": _google_pricing_entry("0.075", "0.30"),
+    # ── Gemini 1.5 (legacy) ──────────────────────────────────────────────
+    "gemini-1.5-pro": _google_pricing_entry("1.25", "5.00", cache_read_m="0.3125"),
+    "gemini-1.5-flash": _google_pricing_entry("0.075", "0.30", cache_read_m="0.01875"),
+    "gemini-1.5-flash-8b": _google_pricing_entry("0.0375", "0.15", cache_read_m="0.01"),
+    # ── Embeddings / robotics ────────────────────────────────────────────
+    "gemini-embedding-001": _google_pricing_entry("0.15", "0.00"),
+    "gemini-embedding-2": _google_pricing_entry("0.20", "0.00"),
+    "gemini-robotics-er-1.6-preview": _google_pricing_entry("1.00", "5.00"),
+}
+
+
+def _normalize_google_model_name(model: str) -> str:
+    """Normalize Gemini model ids for pricing lookup."""
+    name = (model or "").lower().strip()
+    if name.startswith("models/"):
+        name = name[len("models/"):]
+    if name.startswith("google/"):
+        name = name[len("google/"):]
+    if _GEMINI_DATED_SUFFIX.search(name):
+        name = _GEMINI_DATED_SUFFIX.sub("", name)
+    return name
+
+
+def _lookup_google_gemini_pricing(model: str) -> Optional[PricingEntry]:
+    normalized = _normalize_google_model_name(model)
+    if not normalized.startswith("gemini-"):
+        return None
+    return _GOOGLE_GEMINI_PRICING.get(normalized)
+
 
 # Official docs snapshot entries. Models whose published pricing and cache
 # semantics are stable enough to encode exactly.
@@ -409,37 +495,6 @@ _OFFICIAL_DOCS_PRICING: Dict[tuple[str, str], PricingEntry] = {
         source_url="https://api-docs.deepseek.com/quick_start/pricing",
         pricing_version="deepseek-pricing-2026-05-12",
     ),
-    # Google Gemini
-    (
-        "google",
-        "gemini-2.5-pro",
-    ): PricingEntry(
-        input_cost_per_million=Decimal("1.25"),
-        output_cost_per_million=Decimal("10.00"),
-        source="official_docs_snapshot",
-        source_url="https://ai.google.dev/pricing",
-        pricing_version="google-pricing-2026-03-16",
-    ),
-    (
-        "google",
-        "gemini-2.5-flash",
-    ): PricingEntry(
-        input_cost_per_million=Decimal("0.15"),
-        output_cost_per_million=Decimal("0.60"),
-        source="official_docs_snapshot",
-        source_url="https://ai.google.dev/pricing",
-        pricing_version="google-pricing-2026-03-16",
-    ),
-    (
-        "google",
-        "gemini-2.0-flash",
-    ): PricingEntry(
-        input_cost_per_million=Decimal("0.10"),
-        output_cost_per_million=Decimal("0.40"),
-        source="official_docs_snapshot",
-        source_url="https://ai.google.dev/pricing",
-        pricing_version="google-pricing-2026-03-16",
-    ),
     # AWS Bedrock — pricing per the Bedrock pricing page.
     # Bedrock charges the same per-token rates as the model provider but
     # through AWS billing.  These are the on-demand prices (no commitment).
@@ -576,6 +631,13 @@ def resolve_billing_route(
         return BillingRoute(provider="openai", model=model.split("/")[-1], base_url=base_url or "", billing_mode="official_docs_snapshot")
     if provider_name in {"minimax", "minimax-cn"}:
         return BillingRoute(provider=provider_name, model=model.split("/")[-1], base_url=base_url or "", billing_mode="official_docs_snapshot")
+    if provider_name in {"gemini", "google-gemini-cli"}:
+        return BillingRoute(
+            provider="google",
+            model=model.split("/")[-1] if model else "",
+            base_url=base_url or "",
+            billing_mode="official_docs_snapshot",
+        )
     if provider_name in {"custom", "local"} or (base and "localhost" in base):
         return BillingRoute(provider=provider_name or "custom", model=model, base_url=base_url or "", billing_mode="unknown")
     return BillingRoute(provider=provider_name or "unknown", model=model.split("/")[-1] if model else "", base_url=base_url or "", billing_mode="unknown")
@@ -600,15 +662,20 @@ def _normalize_anthropic_model_name(model: str) -> str:
 
 def _lookup_official_docs_pricing(route: BillingRoute) -> Optional[PricingEntry]:
     model = route.model.lower()
-    # Direct lookup first
-    entry = _OFFICIAL_DOCS_PRICING.get((route.provider, model))
+    provider = route.provider
+    if provider in _GOOGLE_PROVIDER_ALIASES:
+        provider = "google"
+    entry = _OFFICIAL_DOCS_PRICING.get((provider, model))
     if entry:
         return entry
+    google_entry = _lookup_google_gemini_pricing(model)
+    if google_entry:
+        return google_entry
     # Try normalized name for Anthropic (handles dot-notation like opus-4.7)
-    if route.provider == "anthropic":
+    if provider == "anthropic":
         normalized = _normalize_anthropic_model_name(model)
         if normalized != model:
-            entry = _OFFICIAL_DOCS_PRICING.get((route.provider, normalized))
+            entry = _OFFICIAL_DOCS_PRICING.get((provider, normalized))
             if entry:
                 return entry
     return None

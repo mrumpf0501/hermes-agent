@@ -4,6 +4,7 @@ from agent.usage_pricing import (
     CanonicalUsage,
     estimate_usage_cost,
     get_pricing_entry,
+    has_known_pricing,
     normalize_usage,
 )
 
@@ -210,6 +211,56 @@ def test_deepseek_v4_pro_pricing_entry_exists():
     assert float(entry.input_cost_per_million) == 1.74
     assert float(entry.output_cost_per_million) == 3.48
     assert float(entry.cache_read_cost_per_million) == 0.0145
+
+
+def test_gemini_31_flash_lite_preview_pricing_via_gemini_provider():
+    entry = get_pricing_entry(
+        "gemini-3.1-flash-lite-preview",
+        provider="gemini",
+    )
+    assert entry is not None
+    assert float(entry.input_cost_per_million) == 0.25
+    assert float(entry.output_cost_per_million) == 1.50
+    assert float(entry.cache_read_cost_per_million) == 0.025
+
+
+def test_gemini_31_flash_lite_preview_pricing_via_gmi_gateway(monkeypatch):
+    monkeypatch.setattr(
+        "agent.usage_pricing.fetch_endpoint_model_metadata",
+        lambda base_url, api_key=None: {},
+    )
+    entry = get_pricing_entry(
+        "google/gemini-3.1-flash-lite-preview",
+        provider="gmi",
+        base_url="https://api.gmi-serving.com/v1",
+    )
+    assert entry is not None
+    assert float(entry.input_cost_per_million) == 0.25
+    assert float(entry.output_cost_per_million) == 1.50
+
+
+def test_gemini_31_flash_lite_preview_estimate_usage_cost():
+    result = estimate_usage_cost(
+        "gemini-3.1-flash-lite-preview",
+        CanonicalUsage(input_tokens=1_000_000, output_tokens=500_000),
+        provider="gemini",
+    )
+    assert result.status == "estimated"
+    assert result.amount_usd is not None
+    # 1M × $0.25/M + 500K × $1.50/M = $0.25 + $0.75 = $1.00
+    assert float(result.amount_usd) == 1.0
+
+
+def test_gemini_25_flash_pricing_matches_official_standard_tier():
+    entry = get_pricing_entry("gemini-2.5-flash", provider="gemini")
+    assert entry is not None
+    assert float(entry.input_cost_per_million) == 0.30
+    assert float(entry.output_cost_per_million) == 2.50
+    assert float(entry.cache_read_cost_per_million) == 0.03
+
+
+def test_has_known_pricing_for_google_prefixed_model_without_provider():
+    assert has_known_pricing("google/gemini-3-flash-preview") is True
 
 
 def test_deepseek_v4_pro_estimate_usage_cost():
