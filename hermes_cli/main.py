@@ -10985,7 +10985,7 @@ def cmd_dashboard(args):
 
     if "HERMES_WEB_DIST" not in os.environ and not getattr(args, "skip_build", False):
         if not _build_web_ui(
-            web_dir,
+            PROJECT_ROOT / "web",
             fatal=True,
             force=getattr(args, "rebuild", False),
         ):
@@ -10997,7 +10997,7 @@ def cmd_dashboard(args):
         _dist_root = (
             Path(os.environ["HERMES_WEB_DIST"])
             if "HERMES_WEB_DIST" in os.environ
-            else dist_root
+            else PROJECT_ROOT / "hermes_cli" / "web_dist"
         )
         if not (_dist_root / "index.html").exists():
             print(f"✗ --skip-build was passed but no web dist found at: {_dist_root}")
@@ -11005,15 +11005,6 @@ def cmd_dashboard(args):
             print("  Or drop --skip-build to build automatically.")
             sys.exit(1)
         print(f"→ Skipping web UI build (--skip-build); using dist at {_dist_root}")
-
-    served_dist = _ensure_dashboard_web_dist_env(checkout)
-    if (served_dist / "index.html").is_file():
-        print(f"→ Serving web UI from {served_dist}")
-    else:
-        print(
-            f"⚠ No web UI bundle at {served_dist} — dashboard pages will 404.\n"
-            "  Build with:  cd web && npm install && npm run build"
-        )
 
     # Discover and load plugins so any DashboardAuthProvider plugin
     # (e.g. plugins/dashboard_auth/nous) registers BEFORE start_server's
