@@ -451,7 +451,7 @@ function ModelCard({
 
         <div className="flex items-center justify-between text-xs text-text-secondary border-t border-border/30 pt-2">
           <div className="flex items-center gap-3">
-            {showTokens && entry.estimated_cost > 0 && (
+            {showTokens && totalTokens > 0 && (
               <span className="flex items-center gap-0.5">
                 <DollarSign className="h-2.5 w-2.5" />
                 {formatCost(entry.estimated_cost)}

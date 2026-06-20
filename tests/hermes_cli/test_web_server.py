@@ -995,6 +995,37 @@ class TestNewEndpoints:
             "top_skills": [],
         }
 
+    def test_analytics_models_recomputes_gemini_cost_from_tokens(self):
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            db.create_session(
+                session_id="models-cost-recompute-test",
+                source="cli",
+                model="gemini-3.1-flash-lite-preview",
+            )
+            db.update_token_counts(
+                "models-cost-recompute-test",
+                input_tokens=1_000_000,
+                output_tokens=500_000,
+                model="gemini-3.1-flash-lite-preview",
+                billing_provider="gemini",
+                estimated_cost_usd=0.0,
+            )
+        finally:
+            db.close()
+
+        resp = self.client.get("/api/analytics/models?days=7")
+        assert resp.status_code == 200
+        data = resp.json()
+        gemini = next(
+            m for m in data["models"]
+            if m["model"] == "gemini-3.1-flash-lite-preview"
+        )
+        assert gemini["estimated_cost"] == pytest.approx(1.0, abs=0.01)
+        assert data["totals"]["total_estimated_cost"] == pytest.approx(1.0, abs=0.01)
+
     def test_analytics_usage_includes_skill_breakdown(self):
         from hermes_state import SessionDB
 

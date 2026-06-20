@@ -3456,6 +3456,34 @@ async def get_usage_analytics(days: int = 30):
         db.close()
 
 
+def _recompute_models_estimated_cost(row: dict) -> float:
+    """Estimate USD cost from aggregated token totals and current pricing tables.
+
+    Session rows often have ``estimated_cost_usd = 0`` when pricing was added
+    after the session ran, or when the write-time lookup returned ``unknown``.
+    Recompute on read so dashboard analytics stay current.
+    """
+    from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+
+    model_name = row.get("model") or ""
+    provider = (row.get("billing_provider") or "").strip() or None
+    base_url = (row.get("billing_base_url") or "").strip() or None
+    result = estimate_usage_cost(
+        model_name,
+        CanonicalUsage(
+            input_tokens=int(row.get("input_tokens") or 0),
+            output_tokens=int(row.get("output_tokens") or 0),
+            cache_read_tokens=int(row.get("cache_read_tokens") or 0),
+            cache_write_tokens=int(row.get("cache_write_tokens") or 0),
+        ),
+        provider=provider,
+        base_url=base_url,
+    )
+    if result.amount_usd is None:
+        return 0.0
+    return float(result.amount_usd)
+
+
 @app.get("/api/analytics/models")
 async def get_models_analytics(days: int = 30):
     """Rich per-model analytics for the Models dashboard page.
@@ -3472,11 +3500,12 @@ async def get_models_analytics(days: int = 30):
         cur = db._conn.execute("""
             SELECT model,
                    billing_provider,
+                   MAX(billing_base_url) as billing_base_url,
                    SUM(input_tokens) as input_tokens,
                    SUM(output_tokens) as output_tokens,
                    SUM(cache_read_tokens) as cache_read_tokens,
+                   SUM(cache_write_tokens) as cache_write_tokens,
                    SUM(reasoning_tokens) as reasoning_tokens,
-                   COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
                    COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
                    COUNT(*) as sessions,
                    SUM(COALESCE(api_call_count, 0)) as api_calls,
@@ -3493,6 +3522,7 @@ async def get_models_analytics(days: int = 30):
         for row in rows:
             provider = row.get("billing_provider") or ""
             model_name = row["model"]
+            estimated_cost = _recompute_models_estimated_cost(row)
             caps = {}
             try:
                 from agent.models_dev import get_model_capabilities
@@ -3516,7 +3546,7 @@ async def get_models_analytics(days: int = 30):
                 "output_tokens": row["output_tokens"],
                 "cache_read_tokens": row["cache_read_tokens"],
                 "reasoning_tokens": row["reasoning_tokens"],
-                "estimated_cost": row["estimated_cost"],
+                "estimated_cost": estimated_cost,
                 "actual_cost": row["actual_cost"],
                 "sessions": row["sessions"],
                 "api_calls": row["api_calls"],
@@ -3532,13 +3562,13 @@ async def get_models_analytics(days: int = 30):
                    SUM(output_tokens) as total_output,
                    SUM(cache_read_tokens) as total_cache_read,
                    SUM(reasoning_tokens) as total_reasoning,
-                   COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
                    COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
                    COUNT(*) as total_sessions,
                    SUM(COALESCE(api_call_count, 0)) as total_api_calls
             FROM sessions WHERE started_at > ? AND model IS NOT NULL AND model != ''
         """, (cutoff,))
         totals = dict(totals_cur.fetchone())
+        totals["total_estimated_cost"] = sum(m["estimated_cost"] for m in models)
 
         return {
             "models": models,
