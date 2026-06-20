@@ -10249,7 +10249,8 @@ async def copy_profile_skill(name: str, body: ProfileSkillCopy):
         "ok": True,
         "path": str(dest),
         "skills": skills,
-        "skill_count": len(skills),
+        "skill_count": len(skills)
+    }
 
 @app.put("/api/profiles/{name}/description")
 async def update_profile_description_endpoint(name: str, body: ProfileDescriptionUpdate):
