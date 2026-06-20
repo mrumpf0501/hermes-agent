@@ -46,6 +46,14 @@ def build_dashboard_parser(
         ),
     )
     dashboard_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help=(
+            "Force a fresh Vite build into hermes_cli/web_dist/ before starting "
+            "(use after git pull when dashboard pages look stale)"
+        ),
+    )
+    dashboard_parser.add_argument(
         "--isolated",
         action="store_true",
         help=(

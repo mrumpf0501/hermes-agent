@@ -12509,63 +12509,6 @@ def main():
         cmd_dashboard_register=cmd_dashboard_register,
     )
 
-    dashboard_parser.add_argument(
-        "--port", type=int, default=9119, help="Port (default 9119)"
-    )
-    dashboard_parser.add_argument(
-        "--host", default="127.0.0.1", help="Host (default 127.0.0.1)"
-    )
-    dashboard_parser.add_argument(
-        "--no-open", action="store_true", help="Don't open browser automatically"
-    )
-    dashboard_parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="Allow binding to non-localhost (DANGEROUS: exposes API keys on the network)",
-    )
-    dashboard_parser.add_argument(
-        "--tui",
-        action="store_true",
-        help=(
-            "Expose the in-browser Chat tab (embedded `hermes --tui` via PTY/WebSocket). "
-            "Alternatively set HERMES_DASHBOARD_TUI=1."
-        ),
-    )
-    dashboard_parser.add_argument(
-        "--rebuild",
-        action="store_true",
-        help=(
-            "Force a fresh Vite build into hermes_cli/web_dist/ before starting "
-            "(use after git pull when dashboard pages look stale)"
-        ),
-    )
-    dashboard_parser.add_argument(
-        "--skip-build",
-        action="store_true",
-        help=(
-            "Skip the web UI build step and serve the existing dist directly. "
-            "Useful for non-interactive contexts (Windows Scheduled Tasks, CI) "
-            "where npm may not be available. Pre-build with: cd web && npm run build"
-        ),
-    )
-    # Lifecycle flags — mutually exclusive with each other and with the
-    # start-a-server flags above (if both are passed, --stop / --status win
-    # because they exit before the server is started).  The dashboard has
-    # no service manager and no PID file, so these scan the process table
-    # for `hermes dashboard` cmdlines and SIGTERM them directly — the same
-    # path `hermes update` uses to clean up stale dashboards.
-    dashboard_parser.add_argument(
-        "--stop",
-        action="store_true",
-        help="Stop all running hermes dashboard processes and exit",
-    )
-    dashboard_parser.add_argument(
-        "--status",
-        action="store_true",
-        help="List running hermes dashboard processes and exit",
-    )
-    dashboard_parser.set_defaults(func=cmd_dashboard)
-
     # =========================================================================
     # desktop (a.k.a. gui) command
     #
