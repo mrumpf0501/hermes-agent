@@ -1361,7 +1361,6 @@ export default function ProfilesPage() {
               </Card>
             );
           })}
-        </div>
       </div>
 
       {/* Editor dialog — model / description / SOUL for the selected profile */}
