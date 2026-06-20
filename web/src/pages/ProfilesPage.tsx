@@ -12,7 +12,6 @@ import {
   AlignLeft,
   Check,
   ChevronDown,
-  Package,
   Cpu,
   MoreVertical,
   Pencil,
@@ -26,7 +25,6 @@ import {
 import spinners from "unicode-animations";
 import { H2 } from "@nous-research/ui/ui/components/typography/h2";
 import { api } from "@/lib/api";
-import type { ProfileInfo, ProfileSkillEntry } from "@/lib/api";
 import type { ActiveProfileInfo, ProfileInfo } from "@/lib/api";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
@@ -346,23 +344,6 @@ export default function ProfilesPage() {
   // newer state when the user switches profiles or closes the editor.
   const activeSoulRequest = useRef<string | null>(null);
 
-  // Inline skills editor state
-  const [editingSkillsFor, setEditingSkillsFor] = useState<string | null>(
-    null,
-  );
-  const [profileSkills, setProfileSkills] = useState<ProfileSkillEntry[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(false);
-  const [hubIdentifier, setHubIdentifier] = useState("");
-  const [skillInstalling, setSkillInstalling] = useState(false);
-  const [copyFromProfile, setCopyFromProfile] = useState("default");
-  const [copySkillId, setCopySkillId] = useState("");
-  const [sourceProfileSkills, setSourceProfileSkills] = useState<
-    ProfileSkillEntry[]
-  >([]);
-  const [skillCopying, setSkillCopying] = useState(false);
-  const activeSkillsRequest = useRef<string | null>(null);
-
-  const load = useCallback(() => {
   // Inline description editor state
   const [editingDescFor, setEditingDescFor] = useState<string | null>(null);
   const [descText, setDescText] = useState("");
@@ -548,10 +529,6 @@ export default function ProfilesPage() {
         closeEditor();
         return;
       }
-      if (editingSkillsFor) {
-        activeSkillsRequest.current = null;
-        setEditingSkillsFor(null);
-      }
       setEditingDescFor(null);
       setEditingModelFor(null);
       setEditingSoulFor(name);
@@ -568,7 +545,6 @@ export default function ProfilesPage() {
         }
       }
     },
-    [editingSoulFor, editingSkillsFor, showToast, t.status.error],
     [closeEditor, editingSoulFor, showToast, t.status.error],
   );
 
@@ -584,115 +560,6 @@ export default function ProfilesPage() {
     } finally {
       setSoulSaving(false);
     }
-  };
-
-  const loadSourceProfileSkills = useCallback(
-    async (sourceName: string) => {
-      try {
-        const res = await api.getProfileSkills(sourceName);
-        setSourceProfileSkills(res.skills);
-        if (res.skills.length > 0) {
-          setCopySkillId((prev) =>
-            res.skills.some((s) => s.id === prev) ? prev : res.skills[0].id,
-          );
-        } else {
-          setCopySkillId("");
-        }
-      } catch {
-        setSourceProfileSkills([]);
-        setCopySkillId("");
-      }
-    },
-    [],
-  );
-
-  const openSkillsEditor = useCallback(
-    async (name: string) => {
-      if (editingSkillsFor === name) {
-        activeSkillsRequest.current = null;
-        setEditingSkillsFor(null);
-        return;
-      }
-      if (editingSoulFor) {
-        activeSoulRequest.current = null;
-        setEditingSoulFor(null);
-      }
-      setEditingSkillsFor(name);
-      setProfileSkills([]);
-      setHubIdentifier("");
-      setSkillsLoading(true);
-      activeSkillsRequest.current = name;
-      const others = profiles.filter((p) => p.name !== name);
-      const defaultSource =
-        others.find((p) => p.name === "default")?.name ?? others[0]?.name ?? "";
-      setCopyFromProfile(defaultSource);
-      try {
-        const res = await api.getProfileSkills(name);
-        if (activeSkillsRequest.current === name) {
-          setProfileSkills(res.skills);
-        }
-        if (defaultSource) {
-          await loadSourceProfileSkills(defaultSource);
-        }
-      } catch (e) {
-        if (activeSkillsRequest.current === name) {
-          showToast(`${t.status.error}: ${e}`, "error");
-        }
-      } finally {
-        if (activeSkillsRequest.current === name) {
-          setSkillsLoading(false);
-        }
-      }
-    },
-    [
-      editingSkillsFor,
-      editingSoulFor,
-      profiles,
-      loadSourceProfileSkills,
-      showToast,
-      t.status.error,
-    ],
-  );
-
-  const handleInstallSkill = async (profileName: string) => {
-    const identifier = hubIdentifier.trim();
-    if (!identifier) return;
-    setSkillInstalling(true);
-    try {
-      const res = await api.installProfileSkill(profileName, identifier);
-      setProfileSkills(res.skills);
-      setHubIdentifier("");
-      showToast(t.profiles.skillInstalled, "success");
-      load();
-    } catch (e) {
-      showToast(`${t.status.error}: ${e}`, "error");
-    } finally {
-      setSkillInstalling(false);
-    }
-  };
-
-  const handleCopySkill = async (profileName: string) => {
-    if (!copyFromProfile || !copySkillId) return;
-    setSkillCopying(true);
-    try {
-      const res = await api.copyProfileSkill(
-        profileName,
-        copyFromProfile,
-        copySkillId,
-      );
-      setProfileSkills(res.skills);
-      showToast(t.profiles.skillCopied, "success");
-      load();
-    } catch (e) {
-      showToast(`${t.status.error}: ${e}`, "error");
-    } finally {
-      setSkillCopying(false);
-    }
-  };
-
-  const handleCopySourceChange = async (sourceName: string) => {
-    setCopyFromProfile(sourceName);
-    await loadSourceProfileSkills(sourceName);
   };
 
   const openDescEditor = useCallback(
@@ -1157,20 +1024,18 @@ export default function ProfilesPage() {
           </Card>
         )}
 
-        {profiles.map((p) => {
-          const isRenaming = renamingFrom === p.name;
-          const isEditingSoul = editingSoulFor === p.name;
-		  const isEditingDesc = editingDescFor === p.name;
-          const isEditingSkills = editingSkillsFor === p.name;
-          const otherProfiles = profiles.filter((x) => x.name !== p.name);
-		  const active = isActive(p);
-          return (
-            <Card key={p.name}>
-              <CardContent className="flex items-start gap-4 py-4">
-                <div className="flex-1 min-w-0">
-                    {isRenaming ? (
-                      <>
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {profiles.map((p) => {
+            const isRenaming = renamingFrom === p.name;
+            const isEditingSoul = editingSoulFor === p.name;
+            const isEditingDesc = editingDescFor === p.name;
+            const isEditingModel = editingModelFor === p.name;
+            const active = isActive(p);
+            return (
+              <Card key={p.name} className="h-full">
+                <CardContent className="flex h-full flex-col gap-2 py-4">
+                  {isRenaming ? (
+                    <div className="flex flex-col gap-2">
                       <Input
                         autoFocus
                         value={renameTo}
@@ -1185,7 +1050,6 @@ export default function ProfilesPage() {
                           !PROFILE_NAME_RE.test(renameTo.trim())
                         }
                       />
-                      </div>
 
                       {(() => {
                         const trimmed = renameTo.trim();
@@ -1222,7 +1086,7 @@ export default function ProfilesPage() {
                           {t.common.cancel}
                         </Button>
                       </div>
-                      </>
+                    </div>
                   ) : (
                     <>
                       <div className="flex items-start gap-2">
@@ -1356,11 +1220,11 @@ export default function ProfilesPage() {
                       </div>
                     </>
                   )}
-                </div>
                 </CardContent>
               </Card>
             );
           })}
+        </div>
       </div>
 
       {/* Editor dialog — model / description / SOUL for the selected profile */}
