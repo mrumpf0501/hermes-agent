@@ -1168,8 +1168,9 @@ export default function ProfilesPage() {
             <Card key={p.name}>
               <CardContent className="flex items-start gap-4 py-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     {isRenaming ? (
+                      <>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <Input
                         autoFocus
                         value={renameTo}
@@ -1184,6 +1185,7 @@ export default function ProfilesPage() {
                           !PROFILE_NAME_RE.test(renameTo.trim())
                         }
                       />
+                      </div>
 
                       {(() => {
                         const trimmed = renameTo.trim();
@@ -1220,7 +1222,7 @@ export default function ProfilesPage() {
                           {t.common.cancel}
                         </Button>
                       </div>
-                    </div>
+                      </>
                   ) : (
                     <>
                       <div className="flex items-start gap-2">
@@ -1354,6 +1356,7 @@ export default function ProfilesPage() {
                       </div>
                     </>
                   )}
+                </div>
                 </CardContent>
               </Card>
             );
