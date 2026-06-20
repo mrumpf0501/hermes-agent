@@ -1157,18 +1157,19 @@ export default function ProfilesPage() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {profiles.map((p) => {
-            const isRenaming = renamingFrom === p.name;
-            const isEditingSoul = editingSoulFor === p.name;
-            const isEditingDesc = editingDescFor === p.name;
-            const isEditingModel = editingModelFor === p.name;
-            const active = isActive(p);
-            return (
-              <Card key={p.name} className="h-full">
-                <CardContent className="flex h-full flex-col gap-2 py-4">
-                  {isRenaming ? (
-                    <div className="flex flex-col gap-2">
+        {profiles.map((p) => {
+          const isRenaming = renamingFrom === p.name;
+          const isEditingSoul = editingSoulFor === p.name;
+		  const isEditingDesc = editingDescFor === p.name;
+          const isEditingSkills = editingSkillsFor === p.name;
+          const otherProfiles = profiles.filter((x) => x.name !== p.name);
+		  const active = isActive(p);
+          return (
+            <Card key={p.name}>
+              <CardContent className="flex items-start gap-4 py-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    {isRenaming ? (
                       <Input
                         autoFocus
                         value={renameTo}
@@ -1222,31 +1223,6 @@ export default function ProfilesPage() {
                     </div>
                   ) : (
                     <>
-                      <Button
-                        ghost
-                        size="icon"
-                        title={t.profiles.editSkills}
-                        aria-label={t.profiles.editSkills}
-                        onClick={() => openSkillsEditor(p.name)}
-                      >
-                        {isEditingSkills ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <Package className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <Button
-                        ghost
-                        size="icon"
-                        title={t.profiles.editSoul}
-                        aria-label={t.profiles.editSoul}
-                        onClick={() => openSoulEditor(p.name)}
-                      >
-                        {isEditingSoul ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <span aria-hidden className="text-xs font-bold">
-                            S
                       <div className="flex items-start gap-2">
                         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                           <span className="font-medium text-sm truncate">
