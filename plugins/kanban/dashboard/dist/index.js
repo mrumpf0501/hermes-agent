@@ -112,26 +112,22 @@
   function uploadTaskAttachments(taskId, boardSlug, fileList) {
     const files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return Promise.resolve();
-    const token = window.__HERMES_SESSION_TOKEN__ || "";
-    const headers = token ? { Authorization: "Bearer " + token } : {};
     const url = withBoard(`${API}/tasks/${encodeURIComponent(taskId)}/attachments`, boardSlug);
     let chain = Promise.resolve();
     files.forEach(function (f) {
       chain = chain.then(function () {
         const fd = new FormData();
         fd.append("file", f, f.name);
-        return fetch(url, {
-          method: "POST",
-          headers: headers,
-          credentials: "same-origin",
-          body: fd,
-        }).then(function (resp) {
-          if (!resp.ok) {
-            return resp.text().then(function (txt) {
-              throw new Error(parseApiErrorMessage(new Error(resp.status + ": " + txt)));
-            });
-          }
-        });
+        // SDK.authedFetch handles auth in BOTH modes (loopback token header /
+        // gated cookie) and applies the dashboard base-path prefix.
+        return SDK.authedFetch(url, { method: "POST", body: fd })
+          .then(function (resp) {
+            if (!resp.ok) {
+              return resp.text().then(function (txt) {
+                throw new Error(parseApiErrorMessage(new Error(resp.status + ": " + txt)));
+              });
+            }
+          });
       });
     });
     return chain;
@@ -3425,26 +3421,6 @@
         })
         .finally(function () {
           setUploadBusy(false);
-
-      const url = withBoard(`${API}/tasks/${encodeURIComponent(props.taskId)}/attachments`, boardSlug);
-      // Upload sequentially so a partial failure leaves a clear state.
-      let chain = Promise.resolve();
-      files.forEach(function (f) {
-        chain = chain.then(function () {
-          const fd = new FormData();
-          fd.append("file", f, f.name);
-          // SDK.authedFetch handles auth in BOTH modes (loopback token header /
-          // gated cookie) and applies the dashboard base-path prefix. The old
-          // hand-rolled Authorization:Bearer + credentials:'same-origin' sent
-          // an empty token and 401'd in gated mode.
-          return SDK.authedFetch(url, { method: "POST", body: fd })
-            .then(function (resp) {
-              if (!resp.ok) {
-                return resp.text().then(function (txt) {
-                  throw new Error(parseApiErrorMessage(new Error(resp.status + ": " + txt)));
-                });
-              }
-            });
         });
     };
 
