@@ -4776,7 +4776,9 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False, force: bool = False) ->
         _say(f"→ Web UI bundle up to date ({dist_dir})")
         return True
 
-    npm = shutil.which("npm")
+    from hermes_constants import find_node_executable, with_hermes_node_path
+
+    npm = find_node_executable("npm")
     if not npm:
         if fatal:
             _say("Web UI frontend not built and npm is not available.")
